@@ -91,7 +91,7 @@ function renderMenu(){
   else if(filtrados.length===0) html='<p class="small" style="text-align:center;padding:20px">Sin resultados para tu búsqueda.</p>';
   const count=cartCount();
   const buscador = `<input id="buscador" placeholder="🔍 Buscar producto..." value="${busqueda}" oninput="busqueda=this.value;render()" onfocus="buscadorFoco=true" onblur="buscadorFoco=false">
-  <div class="chips">
+  <div class="chips" id="chipsMenu">
     <button class="${catSel==='Todas'?'active':''}" onclick="catSel='Todas';render()">Todas</button>
     ${todasCats.map(c=>`<button class="${catSel===c?'active':''}" onclick="catSel='${c.replace(/'/g,"\\'")}';render()">${c}</button>`).join('')}
   </div>`;
@@ -121,8 +121,14 @@ function renderDone(){
   </div>`;
 }
 function render(){
+  const scrollY = window.scrollY;
+  const chipsEl = document.getElementById('chipsMenu');
+  const chipsScroll = chipsEl ? chipsEl.scrollLeft : 0;
   document.getElementById('app').innerHTML = `<header><img class="logo" src="${LOGO_DATAURI}" alt="Mestizo Café"><h1>Menú Mestizo Café</h1></header>
   <main>${step===0?renderMenu():step===1?renderCheckout():renderDone()}</main>`;
+  window.scrollTo(0, scrollY);
+  const newChips = document.getElementById('chipsMenu');
+  if(newChips) newChips.scrollLeft = chipsScroll;
   if(buscadorFoco){
     const el=document.getElementById('buscador');
     if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
