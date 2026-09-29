@@ -247,16 +247,17 @@ function renderRegistrar(){
     ${todasCats.map(c=>`<button class="${catSelReg===c?'active':''}" onclick="catSelReg='${c.replace(/'/g,"\\'")}';render()">${c}</button>`).join('')}
   </div>`;
   const items=cartItems();
-  return `<p class="small">Cuando el cliente pague en efectivo o con terminal, registra aquí lo que llevó: descuenta el stock y queda en el reporte del día.</p>
-  ${buscador}
-  <div class="card">${html}</div>
-  ${items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
+  const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold;color:var(--accent)"><span>Total</span><span>${fmt(cartTotal())}</span></div>
     <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${clientLabel}" oninput="clientLabel=this.value"></div>
     <div style="display:flex;gap:8px">
       <button class="primary" style="flex:1" onclick="registrarPedidoManual('efectivo')">💵 Efectivo</button>
       <button class="primary" style="flex:1" onclick="registrarPedidoManual('tarjeta')">💳 Tarjeta</button>
-    </div></div>`:''}`;
+    </div></div>`:'';
+  return `<p class="small">Cuando el cliente pague en efectivo o con terminal, registra aquí lo que llevó: descuenta el stock y queda en el reporte del día.</p>
+  ${resumen}
+  ${buscador}
+  <div class="card">${html}</div>`;
 }
 function renderInventario(){
   return `<div class="card"><h3 style="margin-top:0">Agregar producto</h3>
