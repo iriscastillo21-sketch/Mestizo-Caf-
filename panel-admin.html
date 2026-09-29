@@ -176,12 +176,16 @@ function renderPendientes(){
 }
 function renderHoy(){
   const today=new Date().toDateString();
-  const list = orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && todayStr(o.fecha)===today);
+  const estadosVisibles = ['aprobado','listo','entregado','cancelacion_solicitada','cancelado'];
+  const list = orders.filter(o=>estadosVisibles.includes(o.estado) && todayStr(o.fecha)===today);
   if(list.length===0) return '<p class="empty">Sin pedidos aprobados hoy todavía.</p>';
+  const etiquetas = {aprobado:'aprobado',listo:'listo',entregado:'entregado',cancelacion_solicitada:'cancelación solicitada',cancelado:'cancelado'};
   return list.map(o=>`<div class="card">
-    <div class="orderline"><strong>#${o.num} · ${o.cliente||''}</strong><span class="pill ${o.estado}">${o.estado}</span></div>
+    <div class="orderline"><strong>#${o.num} · ${o.cliente||''}</strong><span class="pill ${o.estado}">${etiquetas[o.estado]}</span></div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
+    ${o.estado==='cancelacion_solicitada'?`<div class="card small" style="background:var(--bg2);margin-top:8px">⏳ Esperando que el administrador apruebe la cancelación.${o.motivoCancelacion?' Motivo: '+o.motivoCancelacion:''}</div>`:''}
+    ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="card small" style="background:var(--bg2);margin-top:8px">Motivo de cancelación: ${o.motivoCancelacion}</div>`:''}
     <div style="margin-top:8px;display:flex;gap:8px">
       ${o.estado==='aprobado'?`<button class="primary" onclick="marcar('${o.id}','listo')">🔔 Marcar listo</button>`:''}
       ${o.estado==='listo'?`<button class="primary" onclick="marcar('${o.id}','entregado')">📣 Entregado</button>`:''}
