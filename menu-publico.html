@@ -45,7 +45,7 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <div id="app" style="padding:40px;text-align:center;color:#C9B69C">Cargando menú…</div>
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
-let products=[], cart={}, step=0, clientLabel='', busqueda='', catSel='Todas', buscadorFoco=false;
+let products=[], cart={}, step=0, clientLabel='', busqueda='', catSel='', buscadorFoco=false;
 function fmt(n){ return '$'+Number(n).toFixed(0); }
 
 async function loadProducts(){
@@ -69,9 +69,11 @@ async function enviarPedido(metodo){
 }
 function renderMenu(){
   const todasCats=[...new Set(products.map(p=>p.categoria))];
-  const filtrados = products.filter(p=>
-    (catSel==='Todas'||p.categoria===catSel) &&
-    p.nombre.toLowerCase().includes(busqueda.toLowerCase())
+  const catActiva = todasCats.includes(catSel) ? catSel : todasCats[0];
+  const buscando = busqueda.trim()!=='';
+  const filtrados = products.filter(p=> buscando
+    ? p.nombre.toLowerCase().includes(busqueda.toLowerCase())
+    : p.categoria===catActiva
   );
   const cats=[...new Set(filtrados.map(p=>p.categoria))];
   let html='';
@@ -92,8 +94,7 @@ function renderMenu(){
   const count=cartCount();
   const buscador = `<input id="buscador" placeholder="🔍 Buscar producto..." value="${busqueda}" oninput="busqueda=this.value;render()" onfocus="buscadorFoco=true" onblur="buscadorFoco=false">
   <div class="chips" id="chipsMenu">
-    <button class="${catSel==='Todas'?'active':''}" onclick="catSel='Todas';render()">Todas</button>
-    ${todasCats.map(c=>`<button class="${catSel===c?'active':''}" onclick="catSel='${c.replace(/'/g,"\\'")}';render()">${c}</button>`).join('')}
+    ${todasCats.map(c=>`<button class="${!buscando&&catActiva===c?'active':''}" onclick="busqueda='';catSel='${c.replace(/'/g,"\\'")}';render()">${c}</button>`).join('')}
   </div>`;
   return buscador + `<div class="card">${html}</div>` + (count>0?`<button class="cartbar" onclick="step=1;render()"><span>${count} producto(s)</span><span>${fmt(cartTotal())} · Continuar →</span></button>`:'');
 }
