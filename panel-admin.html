@@ -110,6 +110,8 @@ async function post(action,payload){
   await fetch(`${API_URL}?action=${action}&payload=${encodeURIComponent(JSON.stringify({...payload, token: role==='admin'?ADMIN_TOKEN:USER_TOKEN}))}`);
   await loadAll();
 }
+function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function comentarioHTML(o){ return o.comentarios ? `<div class="card small" style="background:var(--bg2);margin-top:8px">📝 <strong>Comentarios:</strong> ${esc(o.comentarios)}</div>` : ''; }
 function fmt(n){ return '$'+Number(n).toFixed(0); }
 function todayStr(d){ return new Date(d).toDateString(); }
 function setTab(t){ tab=t; render(); }
@@ -164,7 +166,7 @@ function botonesCancelacion(o){
     const accion = role==='admin' ? `cancelarDirecto('${o.id}')` : `confirmarSolicitudCancelacion('${o.id}')`;
     return `<div style="margin-top:8px">
       <label>Motivo de la cancelación</label>
-      <textarea rows="2" oninput="cancelMotivo=this.value">${cancelMotivo}</textarea>
+      <textarea rows="2" oninput="cancelMotivo=this.value">${esc(cancelMotivo)}</textarea>
       <div style="display:flex;gap:8px;margin-top:6px">
         <button class="danger" style="flex:1" onclick="${accion}">${role==='admin'?'Cancelar pedido':'Enviar solicitud'}</button>
         <button class="secondary" style="flex:1" onclick="cerrarCancelacion()">Cerrar</button>
@@ -177,9 +179,10 @@ function renderPendientes(){
   const pend = orders.filter(o=>o.estado==='pendiente_pago');
   if(pend.length===0) return '<p class="empty">No hay pedidos esperando validación de pago.</p>';
   return pend.map(o=>`<div class="card">
-    <div class="orderline"><strong>#${o.num} · ${o.cliente||''}</strong><span class="pill ${o.estado}">${o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':'pendiente'}</span></div>
+    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':'pendiente'}</span></div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
+    ${comentarioHTML(o)}
     <button class="primary" style="margin-top:8px" onclick="aprobar('${o.id}')">✅ Validé el pago, aprobar</button>
     ${botonesCancelacion(o)}
   </div>`).join('');
@@ -191,11 +194,12 @@ function renderHoy(){
   if(list.length===0) return '<p class="empty">Sin pedidos aprobados hoy todavía.</p>';
   const etiquetas = {aprobado:'aprobado',listo:'listo',entregado:'entregado',cancelacion_solicitada:'cancelación solicitada',cancelado:'cancelado'};
   return list.map(o=>`<div class="card">
-    <div class="orderline"><strong>#${o.num} · ${o.cliente||''}</strong><span class="pill ${o.estado}">${etiquetas[o.estado]}</span></div>
+    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${etiquetas[o.estado]}</span></div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
-    ${o.estado==='cancelacion_solicitada'?`<div class="card small" style="background:var(--bg2);margin-top:8px">⏳ Esperando que el administrador apruebe la cancelación.${o.motivoCancelacion?' Motivo: '+o.motivoCancelacion:''}</div>`:''}
-    ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="card small" style="background:var(--bg2);margin-top:8px">Motivo de cancelación: ${o.motivoCancelacion}</div>`:''}
+    ${comentarioHTML(o)}
+    ${o.estado==='cancelacion_solicitada'?`<div class="card small" style="background:var(--bg2);margin-top:8px">⏳ Esperando que el administrador apruebe la cancelación.${o.motivoCancelacion?' Motivo: '+esc(o.motivoCancelacion):''}</div>`:''}
+    ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="card small" style="background:var(--bg2);margin-top:8px">Motivo de cancelación: ${esc(o.motivoCancelacion)}</div>`:''}
     <div style="margin-top:8px;display:flex;gap:8px">
       ${o.estado==='aprobado'?`<button class="primary" onclick="marcar('${o.id}','listo')">🔔 Marcar listo</button>`:''}
       ${o.estado==='listo'?`<button class="primary" onclick="marcar('${o.id}','entregado')">📣 Entregado</button>`:''}
@@ -207,10 +211,11 @@ function renderCancelaciones(){
   const list = orders.filter(o=>o.estado==='cancelacion_solicitada');
   if(list.length===0) return '<p class="empty">No hay solicitudes de cancelación pendientes.</p>';
   return list.map(o=>`<div class="card">
-    <div class="orderline"><strong>#${o.num} · ${o.cliente||''}</strong><span class="pill cancelacion_solicitada">solicitada</span></div>
+    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill cancelacion_solicitada">solicitada</span></div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
-    <div class="card small" style="background:var(--bg2);margin-top:8px"><strong>Motivo:</strong> ${o.motivoCancelacion||'(sin especificar)'}</div>
+    ${comentarioHTML(o)}
+    <div class="card small" style="background:var(--bg2);margin-top:8px"><strong>Motivo:</strong> ${esc(o.motivoCancelacion||'(sin especificar)')}</div>
     <div style="display:flex;gap:8px;margin-top:8px">
       <button class="danger" style="flex:1" onclick="resolverCancelacion('${o.id}',true)">✅ Aprobar cancelación</button>
       <button class="secondary" style="flex:1" onclick="resolverCancelacion('${o.id}',false)">Rechazar</button>
@@ -248,11 +253,12 @@ function renderHistorial(){
     <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>`;
   if(list.length===0) return filtros + resumen + '<p class="empty">Sin pedidos con esos filtros.</p>';
   const detalle = list.map(o=>`<div class="card">
-    <div class="orderline"><strong>#${o.num} · ${o.cliente||''}</strong><span class="pill ${o.estado}">${o.estado.replace('_',' ')}</span></div>
+    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${o.estado.replace('_',' ')}</span></div>
     <div class="small">${new Date(o.fecha).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'})}${o.metodo?' · '+(o.metodo==='efectivo'?'💵 Efectivo':'💳 Tarjeta'):''}</div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
-    ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="small" style="margin-top:6px"><strong>Motivo cancelación:</strong> ${o.motivoCancelacion}</div>`:''}
+    ${comentarioHTML(o)}
+    ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="small" style="margin-top:6px"><strong>Motivo cancelación:</strong> ${esc(o.motivoCancelacion)}</div>`:''}
   </div>`).join('');
   return filtros + resumen + detalle;
 }
