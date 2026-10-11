@@ -21,7 +21,7 @@ main{max-width:640px;margin:0 auto;padding:20px 16px 100px}
 .cat{color:var(--accent);font-size:.95rem;margin:22px 0 6px;border-bottom:1px solid var(--line);padding-bottom:6px}
 .cartbar{position:fixed;left:0;right:0;bottom:0;background:var(--accent);color:var(--accent-ink);padding:14px 18px;display:flex;justify-content:space-between;border:none;width:100%;cursor:pointer;font-size:1rem;font-family:sans-serif}
 button.secondary{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px 16px;cursor:pointer;font-family:sans-serif}
-input{background:var(--bg2);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 10px;width:100%;font-family:sans-serif;box-sizing:border-box}
+input,textarea{background:var(--bg2);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 10px;width:100%;font-family:sans-serif;box-sizing:border-box}
 label{font-size:.8rem;color:var(--ink-dim);display:block;margin-bottom:4px;font-family:sans-serif}
 .orderline{display:flex;justify-content:space-between;padding:6px 0;font-family:sans-serif}
 .big{font-size:1.3rem;font-weight:bold;color:var(--accent)}
@@ -45,7 +45,8 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <div id="app" style="padding:40px;text-align:center;color:#C9B69C">Cargando menú…</div>
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
-let products=[], cart={}, step=0, clientLabel='', busqueda='', catSel='', buscadorFoco=false;
+let products=[], cart={}, step=0, clientLabel='', comentarios='', busqueda='', catSel='', buscadorFoco=false;
+function esc(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function fmt(n){ return '$'+Number(n).toFixed(0); }
 
 async function loadProducts(){
@@ -64,8 +65,8 @@ let metodoPago = '';
 async function enviarPedido(metodo){
   const items=cartItems(); if(items.length===0) return;
   metodoPago = metodo;
-  await fetch(`${API_URL}?action=crearPedido&payload=${encodeURIComponent(JSON.stringify({items, total:cartTotal(), cliente:clientLabel, metodo}))}`);
-  cart={}; step=2; render();
+  await fetch(`${API_URL}?action=crearPedido&payload=${encodeURIComponent(JSON.stringify({items, total:cartTotal(), cliente:clientLabel, comentarios:comentarios.trim(), metodo}))}`);
+  cart={}; comentarios=''; step=2; render();
 }
 function renderMenu(){
   const todasCats=[...new Set(products.map(p=>p.categoria))];
@@ -104,7 +105,10 @@ function renderCheckout(){
     <h2 style="margin-top:0">Resumen del pedido</h2>
     ${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline big"><span>Total</span><span>${fmt(cartTotal())}</span></div>
-    <div style="margin:14px 0"><label>Tu nombre o número de mesa</label><input placeholder="Ej: Mesa 4 / Ana" oninput="clientLabel=this.value"></div>
+    <div style="margin:14px 0"><label>Tu nombre o número de mesa</label><input placeholder="Ej: Mesa 4 / Ana" value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
+    <div style="margin:14px 0"><label>Comentarios adicionales (opcional)</label>
+      <textarea rows="3" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentarios=this.value">${esc(comentarios)}</textarea>
+      <div class="small" style="margin-top:4px">Indica aquí cualquier preferencia o restricción alimenticia.</div></div>
     <label style="margin-bottom:8px">¿Cómo vas a pagar?</label>
     <div class="actions" style="display:flex;gap:10px">
       <button class="secondary" style="flex:1;padding:14px" onclick="enviarPedido('efectivo')">💵 Efectivo</button>
