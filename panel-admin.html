@@ -68,7 +68,17 @@ let busquedaReg='', catSelReg='Todas';
 let role = localStorage.getItem('mestizo_role') || null;
 let loginError='';
 let cancelandoId=null, cancelMotivo='';
-let historialFecha = new Date().toISOString().slice(0,10);
+function fechaLocal(d){ const x=new Date(d); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }
+let histDesde = fechaLocal(new Date()), histHasta = fechaLocal(new Date()), histEstado = 'todos', histRapido = 'hoy';
+function histPreset(tipo){
+  const hoy = new Date(); const d = new Date();
+  histRapido = tipo;
+  if(tipo==='hoy'){ histDesde=histHasta=fechaLocal(hoy); }
+  else if(tipo==='ayer'){ d.setDate(d.getDate()-1); histDesde=histHasta=fechaLocal(d); }
+  else if(tipo==='7d'){ d.setDate(d.getDate()-6); histDesde=fechaLocal(d); histHasta=fechaLocal(hoy); }
+  else if(tipo==='mes'){ histDesde=fechaLocal(new Date(hoy.getFullYear(),hoy.getMonth(),1)); histHasta=fechaLocal(hoy); }
+  render();
+}
 
 function login(){
   const pass = document.getElementById('loginPass').value;
@@ -207,21 +217,44 @@ function renderCancelaciones(){
     </div></div>`).join('');
 }
 function renderHistorial(){
-  const list = orders.filter(o=>new Date(o.fecha).toISOString().slice(0,10)===historialFecha);
-  const total = list.filter(o=>['aprobado','listo','entregado'].includes(o.estado)).reduce((s,o)=>s+o.total,0);
-  const cancelados = list.filter(o=>o.estado==='cancelado').length;
-  const picker = `<div class="card"><label>Selecciona una fecha</label>
-    <input type="date" value="${historialFecha}" onchange="historialFecha=this.value;render()"></div>`;
-  const resumen = `<div class="stats-row"><div class="card stat"><div class="n">${fmt(total)}</div><div class="l">Total ese día</div></div>
-    <div class="card stat"><div class="n">${list.length}</div><div class="l">Pedidos (${cancelados} cancelados)</div></div></div>`;
-  if(list.length===0) return picker + resumen + '<p class="empty">Sin pedidos en esa fecha.</p>';
+  if(histDesde>histHasta){ const t=histDesde; histDesde=histHasta; histHasta=t; }
+  const enRango = orders.filter(o=>{ const f=fechaLocal(o.fecha); return f>=histDesde && f<=histHasta; });
+  const vendidos = ['aprobado','listo','entregado'];
+  const list = enRango.filter(o=>
+    histEstado==='todos' ? true :
+    histEstado==='ventas' ? vendidos.includes(o.estado) :
+    histEstado==='cancelados' ? o.estado==='cancelado' :
+    histEstado==='pendientes' ? ['pendiente_pago','cancelacion_solicitada'].includes(o.estado) : true);
+  const ventas = enRango.filter(o=>vendidos.includes(o.estado));
+  const total = ventas.reduce((s,o)=>s+o.total,0);
+  const efectivo = ventas.filter(o=>o.metodo==='efectivo').reduce((s,o)=>s+o.total,0);
+  const tarjeta = ventas.filter(o=>o.metodo==='tarjeta').reduce((s,o)=>s+o.total,0);
+  const cancelados = enRango.filter(o=>o.estado==='cancelado').length;
+  const chip = (id,txt)=>`<button class="${histRapido===id?'active':''}" onclick="histPreset('${id}')">${txt}</button>`;
+  const chipE = (id,txt)=>`<button class="${histEstado===id?'active':''}" onclick="histEstado='${id}';render()">${txt}</button>`;
+  const filtros = `<div class="card">
+    <label>Periodo rápido</label>
+    <div class="chips">${chip('hoy','Hoy')}${chip('ayer','Ayer')}${chip('7d','Últimos 7 días')}${chip('mes','Este mes')}</div>
+    <div class="row" style="margin-top:6px">
+      <div><label>Desde</label><input type="date" value="${histDesde}" onchange="histDesde=this.value;histRapido='';render()"></div>
+      <div><label>Hasta</label><input type="date" value="${histHasta}" onchange="histHasta=this.value;histRapido='';render()"></div>
+    </div>
+    <label style="margin-top:10px">Estado</label>
+    <div class="chips">${chipE('todos','Todos')}${chipE('ventas','Ventas')}${chipE('cancelados','Cancelados')}${chipE('pendientes','Pendientes')}</div>
+  </div>`;
+  const resumen = `<div class="stats-row"><div class="card stat"><div class="n">${fmt(total)}</div><div class="l">Ventas del periodo</div></div>
+    <div class="card stat"><div class="n">${enRango.length}</div><div class="l">Pedidos (${cancelados} cancelados)</div></div></div>
+    <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
+    <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>`;
+  if(list.length===0) return filtros + resumen + '<p class="empty">Sin pedidos con esos filtros.</p>';
   const detalle = list.map(o=>`<div class="card">
-    <div class="orderline"><strong>#${o.num} · ${o.cliente||''}</strong><span class="pill ${o.estado}">${o.estado}</span></div>
+    <div class="orderline"><strong>#${o.num} · ${o.cliente||''}</strong><span class="pill ${o.estado}">${o.estado.replace('_',' ')}</span></div>
+    <div class="small">${new Date(o.fecha).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'})}${o.metodo?' · '+(o.metodo==='efectivo'?'💵 Efectivo':'💳 Tarjeta'):''}</div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="small" style="margin-top:6px"><strong>Motivo cancelación:</strong> ${o.motivoCancelacion}</div>`:''}
   </div>`).join('');
-  return picker + resumen + detalle;
+  return filtros + resumen + detalle;
 }
 function renderRegistrar(){
   const todasCats=[...new Set(products.map(p=>p.categoria))];
