@@ -17,6 +17,19 @@ main{max-width:680px;margin:0 auto;padding:20px 16px 60px}
 .sub button.active{background:var(--card);color:var(--ink);border-color:var(--accent)}
 .prod{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
 .qty{display:flex;align-items:center;gap:8px}
+.fila{display:grid;grid-template-columns:1fr 88px 88px;gap:6px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.fila.uno{grid-template-columns:1fr 110px}
+.fila.cab{padding:6px 0;font-size:.74rem;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.04em}
+.fila:last-child{border-bottom:none}
+.nom{font-size:.98rem;line-height:1.25}
+.cel{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center}
+.cel .precio{font-weight:bold;color:var(--ink)}
+.cel.vacia{color:var(--ink-dim)}
+.cel .nota{font-size:.72rem;color:var(--ink-dim)}
+.span2{grid-column:2 / span 2;display:flex;justify-content:center}
+.fila .qty{gap:6px}
+.fila .qty button{width:28px;height:28px}
+.card.lista{padding:8px 12px}
 .qty button{width:28px;height:28px;border-radius:50%;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer}
 button.primary{background:var(--accent);color:var(--accent-ink);border:none;border-radius:8px;padding:11px 16px;font-family:inherit;font-size:1rem;cursor:pointer;font-weight:bold}
 button.danger{background:#8C4040;color:#F4EFE3;border:none;border-radius:8px;padding:9px 14px;font-family:inherit;cursor:pointer}
@@ -50,6 +63,8 @@ label{font-size:.78rem;color:var(--ink-dim);display:block;margin-bottom:4px}
 .error-msg{color:#E88;font-size:.85rem;margin-top:8px}
 .toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:60;display:none;background:var(--accent);color:var(--accent-ink);font-weight:bold;padding:12px 18px;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.35);max-width:90vw}
 .sound-banner{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:60;display:none;background:var(--card);color:var(--ink);border:1px solid var(--accent);border-radius:20px;padding:10px 16px;font-family:inherit;font-size:.9rem;cursor:pointer}
+.hbtn{padding:6px 10px;font-size:.85rem}
+@media (max-width:600px){header{position:static}}
 .role-badge{font-size:.72rem;color:var(--ink-dim);background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:3px 10px}
 </style>
 </head>
@@ -68,7 +83,7 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
 let products=[], orders=[], cart={}, clientLabel='', tab='pend';
-let busquedaReg='', catSelReg='Todas';
+let busquedaReg='', catSelReg='';
 let role = localStorage.getItem('mestizo_role') || null;
 let loginError='';
 let cancelandoId=null, cancelMotivo='';
@@ -104,18 +119,18 @@ function beep(prueba){
   if(audioListo()){
     try{
       const t0=audioCtx.currentTime+0.02;
-      [[784,0],[1047,0.22],[784,0.7],[1047,0.92]].forEach(([f,d])=>{
+      [[880,0],[1175,0.15]].forEach(([f,d])=>{
         const o=audioCtx.createOscillator(), g=audioCtx.createGain();
         o.type='sine'; o.frequency.value=f;
         g.gain.setValueAtTime(0.0001,t0+d);
         g.gain.exponentialRampToValueAtTime(0.35,t0+d+0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001,t0+d+0.4);
+        g.gain.exponentialRampToValueAtTime(0.0001,t0+d+0.22);
         o.connect(g); g.connect(audioCtx.destination);
-        o.start(t0+d); o.stop(t0+d+0.45);
+        o.start(t0+d); o.stop(t0+d+0.25);
       });
     }catch(e){}
   }
-  try{ if(navigator.vibrate) navigator.vibrate([250,120,250]); }catch(e){}
+  try{ if(navigator.vibrate) navigator.vibrate(200); }catch(e){}
 }
 function toggleSound(){
   soundOn=!soundOn;
@@ -358,33 +373,62 @@ function renderHistorial(){
   </div>`).join('');
   return filtros + resumen + detalle;
 }
+const ADMIN_VISTA=true;
+function parseTam(nombre){ const m=nombre.match(/^(.*) \((Mediano|Grande)\)$/); return m?{base:m[1],tam:m[2]}:{base:nombre,tam:null}; }
+function agrupar(lista){
+  const mapa=new Map();
+  lista.forEach(p=>{
+    const {base,tam}=parseTam(p.nombre);
+    if(!mapa.has(base)) mapa.set(base,{base,Mediano:null,Grande:null,unico:null});
+    const g=mapa.get(base); if(tam) g[tam]=p; else g.unico=p;
+  });
+  return [...mapa.values()];
+}
+function celdaProd(p){
+  if(!p) return '<div class="cel vacia">—</div>';
+  const qty=cart[p.id]||0, out=p.stock<=0;
+  const nota = out ? 'Agotado' : (p.stock<=3 ? 'Últimas '+p.stock : (ADMIN_VISTA && p.stock<100 ? 'stock '+p.stock : ''));
+  const ctrl = out ? '' : `<div class="qty"><button ${qty===0?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',-1)">–</button><span>${qty}</span><button ${qty>=p.stock?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',1)">+</button></div>`;
+  return `<div class="cel"><div class="precio">${fmt(p.precio)}</div>${ctrl}${nota?`<div class="nota">${nota}</div>`:''}</div>`;
+}
+function bloqueCategoria(lista){
+  const grupos=agrupar(lista);
+  const conTam=grupos.some(g=>g.Mediano||g.Grande);
+  let h = conTam ? '<div class="fila cab"><div></div><div class="cel">Mediano</div><div class="cel">Grande</div></div>' : '';
+  grupos.forEach(g=>{
+    const solo = g.unico && !g.Mediano && !g.Grande;
+    if(solo){
+      h+=`<div class="fila ${conTam?'':'uno'}"><div class="nom">${esc(g.base)}</div>${conTam?`<div class="span2">${celdaProd(g.unico)}</div>`:celdaProd(g.unico)}</div>`;
+    } else {
+      h+=`<div class="fila"><div class="nom">${esc(g.base)}</div>${celdaProd(g.Mediano)}${celdaProd(g.Grande)}</div>`;
+    }
+  });
+  return h;
+}
+
 function renderRegistrar(){
   const todasCats=[...new Set(products.map(p=>p.categoria))];
-  const filtrados = products.filter(p=>
-    (catSelReg==='Todas'||p.categoria===catSelReg) &&
-    p.nombre.toLowerCase().includes(busquedaReg.toLowerCase())
+  const catActiva = todasCats.includes(catSelReg) ? catSelReg : todasCats[0];
+  const buscando = busquedaReg.trim()!=='';
+  const filtrados = products.filter(p=> buscando
+    ? p.nombre.toLowerCase().includes(busquedaReg.toLowerCase())
+    : p.categoria===catActiva
   );
   const cats=[...new Set(filtrados.map(p=>p.categoria))];
   let html='';
   cats.forEach(cat=>{
     html+=`<h3 style="color:var(--accent);font-size:.95rem;margin:16px 0 4px">${cat}</h3>`;
-    filtrados.filter(p=>p.categoria===cat).forEach(p=>{
-      const qty=cart[p.id]||0, out=p.stock<=0;
-      html+=`<div class="prod"><div><strong>${p.nombre}</strong><div class="small">${fmt(p.precio)} · stock ${p.stock}</div></div>
-      <div class="qty"><button ${qty===0?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',-1)">–</button><span>${qty}</span>
-      <button ${out||qty>=p.stock?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',1)">+</button></div></div>`;
-    });
+    html+=bloqueCategoria(filtrados.filter(p=>p.categoria===cat));
   });
   if(filtrados.length===0) html='<p class="small" style="text-align:center;padding:16px">Sin resultados para tu búsqueda.</p>';
   const buscador = `<input id="buscadorAdmin" placeholder="🔍 Buscar producto..." value="${busquedaReg}" oninput="busquedaReg=this.value;render()">
   <div class="chips" id="chipsReg">
-    <button class="${catSelReg==='Todas'?'active':''}" onclick="catSelReg='Todas';render()">Todas</button>
-    ${todasCats.map(c=>`<button class="${catSelReg===c?'active':''}" onclick="catSelReg='${c.replace(/'/g,"\\'")}';render()">${c}</button>`).join('')}
+    ${todasCats.map(c=>`<button class="${!buscando&&catActiva===c?'active':''}" onclick="busquedaReg='';catSelReg='${c.replace(/'/g,"\\'")}';render()">${c}</button>`).join('')}
   </div>`;
   const items=cartItems();
   const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold;color:var(--accent)"><span>Total</span><span>${fmt(cartTotal())}</span></div>
-    <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${clientLabel}" oninput="clientLabel=this.value"></div>
+    <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
     <div style="display:flex;gap:8px">
       <button class="primary" style="flex:1" onclick="registrarPedidoManual('efectivo')">💵 Efectivo</button>
       <button class="primary" style="flex:1" onclick="registrarPedidoManual('tarjeta')">💳 Tarjeta</button>
@@ -392,7 +436,7 @@ function renderRegistrar(){
   return `<p class="small">Cuando el cliente pague en efectivo o con terminal, registra aquí lo que llevó: descuenta el stock y queda en el reporte del día.</p>
   ${resumen}
   ${buscador}
-  <div class="card">${html}</div>`;
+  <div class="card lista">${html}</div>`;
 }
 function renderInventario(){
   return `<div class="card"><h3 style="margin-top:0">Agregar producto</h3>
@@ -464,6 +508,7 @@ function renderLogin(){
 }
 
 function render(){
+  document.getElementById('app').removeAttribute('style');
   if(!role){
     document.getElementById('app').innerHTML = renderLogin();
     document.getElementById('loginPass').focus();
@@ -483,11 +528,11 @@ function render(){
     <button class="${tab==='inv'?'active':''}" onclick="setTab('inv')">Inventario</button>
     <button class="${tab==='reporte'?'active':''}" onclick="setTab('reporte')">Reporte</button>` : '';
   document.getElementById('app').innerHTML = `<header style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-  <img src="${LOGO_DATAURI}" alt="Mestizo Café" style="height:36px;width:auto">
-  <h1 style="margin:0;flex:1">Panel Admin · Mestizo Café</h1>
-  <span class="role-badge">${role==='admin'?'👑 Administrador':'👤 Usuario'}</span>
-  <button class="secondary" onclick="toggleSound()">${soundOn?'🔔 Sonido':'🔕 Silencio'}</button>
-  <button class="secondary" onclick="logout()">Salir</button>
+  <img src="${LOGO_DATAURI}" alt="Mestizo Café" style="height:32px;width:auto">
+  <h1 style="margin:0;flex:1;min-width:0;font-size:1.05rem">Panel · Mestizo Café</h1>
+  <span class="role-badge">${role==='admin'?'👑 Admin':'👤 Usuario'}</span>
+  <button class="secondary hbtn" title="Sonido de nuevos pedidos" onclick="toggleSound()">${soundOn?'🔔':'🔕'}</button>
+  <button class="secondary hbtn" onclick="logout()">Salir</button>
   <div class="sub" style="width:100%">
     <button class="${tab==='pend'?'active':''}" onclick="setTab('pend')">Por aprobar${pendN>0?' ('+pendN+')':''}</button>
     <button class="${tab==='hoy'?'active':''}" onclick="setTab('hoy')">Pedidos de hoy</button>
