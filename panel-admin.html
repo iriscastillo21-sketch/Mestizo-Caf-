@@ -84,7 +84,7 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
 let products=[], orders=[], cart={}, clientLabel='', tab='pend';
-let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', registrando=false;
+let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', comentariosReg='', registrando=false;
 let role = localStorage.getItem('mestizo_role') || null;
 let loginError='';
 let cancelandoId=null, cancelMotivo='';
@@ -257,16 +257,17 @@ async function registrarPedidoManual(metodo){
   if(descuentoPct>0 && !motivoDesc.trim()){ alert('Escribe el motivo del descuento o cortesía.'); return; }
   registrando=true;
   try{
-    const res=await api('registrarVenta',{items:items.map(i=>({id:i.id,cantidad:i.cantidad})), cliente:clientLabel, metodo, descuento:descuentoPct, motivo:motivoDesc});
-    if(res && res.ok){ cart={}; clientLabel=''; descuentoPct=0; motivoDesc=''; }
+    const res=await api('registrarVenta',{items:items.map(i=>({id:i.id,cantidad:i.cantidad})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc});
+    if(res && res.ok){ cart={}; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; }
     await loadAll();
   } finally { registrando=false; }
 }
 function setDescuento(v){ descuentoPct=v; if(v===0) motivoDesc=''; render(); }
+function addNota(t){ comentariosReg = comentariosReg.trim() ? comentariosReg.trim().replace(/[,.;]$/,'')+', '+t : t; render(); }
 function quitarItem(id){ delete cart[id]; render(); }
 function vaciarPedido(){
   if(!confirm('¿Vaciar el pedido actual?')) return;
-  cart={}; clientLabel=''; descuentoPct=0; motivoDesc=''; render();
+  cart={}; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; render();
 }
 async function aprobar(id){ await post('aprobarPedido', {id}); }
 async function marcar(id, estado){ await post('actualizarEstado', {id, estado}); }
@@ -466,6 +467,9 @@ function renderRegistrar(){
     <div class="chips" style="padding-bottom:4px">${chipD(0,'Ninguno')}${chipD(10,'10%')}${chipD(15,'15%')}${chipD(100,'🎁 Cortesía')}</div>
     ${pct>0?`<div style="margin:6px 0"><label>Motivo (obligatorio)</label><input value="${esc(motivoDesc)}" placeholder="Ej: cumpleaños, error en el servicio" oninput="motivoDesc=this.value"></div>`:''}
     <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
+    <div style="margin:10px 0"><label>Comentarios o restricciones del cliente (opcional)</label>
+      <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea>
+      <div class="chips" style="padding:6px 0 0"><button onclick="addNota('Leche deslactosada')">+ Leche deslactosada</button><button onclick="addNota('Sin azúcar')">+ Sin azúcar</button><button onclick="addNota('Alergia a ')">+ Alergia</button></div></div>
     <div style="display:flex;gap:8px">${pct===100
       ? `<button class="primary" style="flex:1" onclick="registrarPedidoManual('cortesia')">🎁 Registrar cortesía</button>`
       : `<button class="primary" style="flex:1" onclick="registrarPedidoManual('efectivo')">💵 Efectivo</button><button class="primary" style="flex:1" onclick="registrarPedidoManual('tarjeta')">💳 Tarjeta</button>`}</div>
