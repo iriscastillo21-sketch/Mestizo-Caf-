@@ -17,6 +17,19 @@ main{max-width:640px;margin:0 auto;padding:20px 16px 100px}
 .prod{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
 .prod:last-child{border-bottom:none}
 .qty{display:flex;align-items:center;gap:8px}
+.fila{display:grid;grid-template-columns:1fr 88px 88px;gap:6px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.fila.uno{grid-template-columns:1fr 110px}
+.fila.cab{padding:6px 0;font-size:.74rem;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.04em}
+.fila:last-child{border-bottom:none}
+.nom{font-size:.98rem;line-height:1.25}
+.cel{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center}
+.cel .precio{font-weight:bold;color:var(--ink)}
+.cel.vacia{color:var(--ink-dim)}
+.cel .nota{font-size:.72rem;color:var(--ink-dim)}
+.span2{grid-column:2 / span 2;display:flex;justify-content:center}
+.fila .qty{gap:6px}
+.fila .qty button{width:28px;height:28px}
+.card.lista{padding:8px 12px}
 .qty button{width:30px;height:30px;border-radius:50%;border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:1.1rem;cursor:pointer}
 .cat{color:var(--accent);font-size:.95rem;margin:22px 0 6px;border-bottom:1px solid var(--line);padding-bottom:6px}
 .cartbar{position:fixed;left:0;right:0;bottom:0;background:var(--accent);color:var(--accent-ink);padding:14px 18px;display:flex;justify-content:space-between;border:none;width:100%;cursor:pointer;font-size:1rem;font-family:sans-serif}
@@ -68,6 +81,39 @@ async function enviarPedido(metodo){
   await fetch(`${API_URL}?action=crearPedido&payload=${encodeURIComponent(JSON.stringify({items, total:cartTotal(), cliente:clientLabel, comentarios:comentarios.trim(), metodo}))}`);
   cart={}; comentarios=''; step=2; render();
 }
+const ADMIN_VISTA=false;
+function parseTam(nombre){ const m=nombre.match(/^(.*) \((Mediano|Grande)\)$/); return m?{base:m[1],tam:m[2]}:{base:nombre,tam:null}; }
+function agrupar(lista){
+  const mapa=new Map();
+  lista.forEach(p=>{
+    const {base,tam}=parseTam(p.nombre);
+    if(!mapa.has(base)) mapa.set(base,{base,Mediano:null,Grande:null,unico:null});
+    const g=mapa.get(base); if(tam) g[tam]=p; else g.unico=p;
+  });
+  return [...mapa.values()];
+}
+function celdaProd(p){
+  if(!p) return '<div class="cel vacia">—</div>';
+  const qty=cart[p.id]||0, out=p.stock<=0;
+  const nota = out ? 'Agotado' : (p.stock<=3 ? 'Últimas '+p.stock : (ADMIN_VISTA && p.stock<100 ? 'stock '+p.stock : ''));
+  const ctrl = out ? '' : `<div class="qty"><button ${qty===0?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',-1)">–</button><span>${qty}</span><button ${qty>=p.stock?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',1)">+</button></div>`;
+  return `<div class="cel"><div class="precio">${fmt(p.precio)}</div>${ctrl}${nota?`<div class="nota">${nota}</div>`:''}</div>`;
+}
+function bloqueCategoria(lista){
+  const grupos=agrupar(lista);
+  const conTam=grupos.some(g=>g.Mediano||g.Grande);
+  let h = conTam ? '<div class="fila cab"><div></div><div class="cel">Mediano</div><div class="cel">Grande</div></div>' : '';
+  grupos.forEach(g=>{
+    const solo = g.unico && !g.Mediano && !g.Grande;
+    if(solo){
+      h+=`<div class="fila ${conTam?'':'uno'}"><div class="nom">${esc(g.base)}</div>${conTam?`<div class="span2">${celdaProd(g.unico)}</div>`:celdaProd(g.unico)}</div>`;
+    } else {
+      h+=`<div class="fila"><div class="nom">${esc(g.base)}</div>${celdaProd(g.Mediano)}${celdaProd(g.Grande)}</div>`;
+    }
+  });
+  return h;
+}
+
 function renderMenu(){
   const todasCats=[...new Set(products.map(p=>p.categoria))];
   const catActiva = todasCats.includes(catSel) ? catSel : todasCats[0];
@@ -83,12 +129,7 @@ function renderMenu(){
       html+=`<div class="warn-alcohol">🔞 <strong>Venta de bebidas alcohólicas solo a personas mayores de 18 años.</strong> Se solicitará identificación oficial al momento de pagar en caja.</div>`;
     }
     html+=`<div class="cat">${cat}</div>`;
-    filtrados.filter(p=>p.categoria===cat).forEach(p=>{
-      const qty=cart[p.id]||0, out=p.stock<=0;
-      html+=`<div class="prod"><div><strong>${p.nombre}</strong><div class="small">${fmt(p.precio)} ${out?'· Agotado':(p.stock<=3?'· Últimas '+p.stock:'')}</div></div>
-      <div class="qty"><button ${qty===0?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',-1)">–</button><span>${qty}</span>
-      <button ${out||qty>=p.stock?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',1)">+</button></div></div>`;
-    });
+    html+=bloqueCategoria(filtrados.filter(p=>p.categoria===cat));
   });
   if(products.length===0) html='<p class="small" style="text-align:center;padding:20px">Aún no hay productos cargados.</p>';
   else if(filtrados.length===0) html='<p class="small" style="text-align:center;padding:20px">Sin resultados para tu búsqueda.</p>';
@@ -97,7 +138,7 @@ function renderMenu(){
   <div class="chips" id="chipsMenu">
     ${todasCats.map(c=>`<button class="${!buscando&&catActiva===c?'active':''}" onclick="busqueda='';catSel='${c.replace(/'/g,"\\'")}';render()">${c}</button>`).join('')}
   </div>`;
-  return buscador + `<div class="card">${html}</div>` + (count>0?`<button class="cartbar" onclick="step=1;render()"><span>${count} producto(s)</span><span>${fmt(cartTotal())} · Continuar →</span></button>`:'');
+  return buscador + `<div class="card lista">${html}</div>` + (count>0?`<button class="cartbar" onclick="step=1;render()"><span>${count} producto(s)</span><span>${fmt(cartTotal())} · Continuar →</span></button>`:'');
 }
 function renderCheckout(){
   const items=cartItems();
@@ -126,6 +167,7 @@ function renderDone(){
   </div>`;
 }
 function render(){
+  document.getElementById('app').removeAttribute('style');
   const scrollY = window.scrollY;
   const chipsEl = document.getElementById('chipsMenu');
   const chipsScroll = chipsEl ? chipsEl.scrollLeft : 0;
