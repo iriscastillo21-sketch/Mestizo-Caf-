@@ -421,6 +421,37 @@ function renderReporte(){
   <div class="card"><p class="small" style="margin:0 0 4px">Producto más vendido hoy</p><p style="margin:0;font-weight:bold">${top?top[0]+' ('+top[1]+' uds)':'—'}</p></div>`;
 }
 
+function renderResumen(){
+  const hoy=new Date().toDateString();
+  const delDia=orders.filter(o=>todayStr(o.fecha)===hoy);
+  const cobrados=delDia.filter(o=>['aprobado','listo','entregado'].includes(o.estado));
+  const suma=a=>a.reduce((t,o)=>t+o.total,0);
+  const efectivo=suma(cobrados.filter(o=>o.metodo==='efectivo'));
+  const tarjeta=suma(cobrados.filter(o=>o.metodo==='tarjeta'));
+  const total=suma(cobrados);
+  const sinMetodo=total-efectivo-tarjeta;
+  const pend=delDia.filter(o=>o.estado==='pendiente_pago');
+  const enRevision=delDia.filter(o=>o.estado==='cancelacion_solicitada');
+  const cancelados=delDia.filter(o=>o.estado==='cancelado');
+  const hora=o=>new Date(o.fecha).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
+  const metodo=o=>o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':'Sin método';
+  const avisos=[
+    pend.length?`⏳ ${pend.length} pedido(s) por cobrar (${fmt(suma(pend))}) aún no cuentan en el total.`:'',
+    enRevision.length?`⚠️ ${enRevision.length} pedido(s) con cancelación solicitada (${fmt(suma(enRevision))}) no se incluyen hasta que el administrador los resuelva.`:'',
+    cancelados.length?`🚫 ${cancelados.length} pedido(s) cancelado(s) hoy (${fmt(suma(cancelados))}), fuera del total.`:'',
+    sinMetodo>0?`Sin método registrado: ${fmt(sinMetodo)}.`:''
+  ].filter(Boolean);
+  const fecha=new Date().toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'});
+  const detalle=cobrados.length ? cobrados.map(o=>`<div class="orderline small"><span>${hora(o)} · #${o.num} ${esc(o.cliente||'')} · ${metodo(o)}</span><strong>${fmt(o.total)}</strong></div>`).join('')
+    : '<p class="empty">Todavía no hay cobros registrados hoy.</p>';
+  return `<p class="small" style="margin:0 0 10px;text-transform:capitalize">${fecha}</p>
+  <div class="card stat"><div class="n" style="font-size:2rem">${fmt(total)}</div><div class="l">Total cobrado hoy · ${cobrados.length} venta(s)</div></div>
+  <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
+  <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>
+  ${avisos.length?`<div class="card small" style="background:var(--bg2)">${avisos.map(a=>`<div style="margin:3px 0">${a}</div>`).join('')}</div>`:''}
+  <div class="card"><h3 style="margin:0 0 8px;font-size:1rem">Detalle de cobros</h3>${detalle}</div>`;
+}
+
 function renderLogin(){
   return `<div class="login-wrap"><div class="login-card">
     <img src="${LOGO_DATAURI}" alt="Mestizo Café">
@@ -444,7 +475,7 @@ function render(){
   const cancTab = orders.filter(o=>o.estado==='cancelacion_solicitada').length;
   const pendN = orders.filter(o=>o.estado==='pendiente_pago').length;
   const body = tab==='pend'?renderPendientes():tab==='hoy'?renderHoy():tab==='reg'?renderRegistrar():
-               tab==='canc'?renderCancelaciones():tab==='hist'?renderHistorial():
+               tab==='res'?renderResumen():tab==='canc'?renderCancelaciones():tab==='hist'?renderHistorial():
                tab==='inv'?renderInventario():renderReporte();
   const tabsAdmin = role==='admin' ? `
     <button class="${tab==='canc'?'active':''}" onclick="setTab('canc')">Cancelaciones${cancTab>0?' ('+cancTab+')':''}</button>
@@ -461,6 +492,7 @@ function render(){
     <button class="${tab==='pend'?'active':''}" onclick="setTab('pend')">Por aprobar${pendN>0?' ('+pendN+')':''}</button>
     <button class="${tab==='hoy'?'active':''}" onclick="setTab('hoy')">Pedidos de hoy</button>
     <button class="${tab==='reg'?'active':''}" onclick="setTab('reg')">Registrar manual</button>
+    <button class="${tab==='res'?'active':''}" onclick="setTab('res')">Resumen del día</button>
     ${tabsAdmin}
   </div></header><main>${body}</main>`;
   window.scrollTo(0, scrollY);
