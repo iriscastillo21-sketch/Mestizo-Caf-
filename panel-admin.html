@@ -63,6 +63,7 @@ label{font-size:.78rem;color:var(--ink-dim);display:block;margin-bottom:4px}
 .error-msg{color:#E88;font-size:.85rem;margin-top:8px}
 .toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:60;display:none;background:var(--accent);color:var(--accent-ink);font-weight:bold;padding:12px 18px;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.35);max-width:90vw}
 .sound-banner{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:60;display:none;background:var(--card);color:var(--ink);border:1px solid var(--accent);border-radius:20px;padding:10px 16px;font-family:inherit;font-size:.9rem;cursor:pointer}
+.xbtn{background:transparent;border:none;color:var(--ink-dim);cursor:pointer;font-size:.95rem;margin-left:6px;padding:2px 6px}
 .hbtn{padding:6px 10px;font-size:.85rem}
 @media (max-width:600px){header{position:static}}
 .role-badge{font-size:.72rem;color:var(--ink-dim);background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:3px 10px}
@@ -83,7 +84,7 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
 let products=[], orders=[], cart={}, clientLabel='', tab='pend';
-let busquedaReg='', catSelReg='';
+let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', registrando=false;
 let role = localStorage.getItem('mestizo_role') || null;
 let loginError='';
 let cancelandoId=null, cancelMotivo='';
@@ -213,13 +214,38 @@ async function loadAll(){
   detectNew(orders);
   render();
 }
+async function api(action,payload){
+  try{
+    const r=await fetch(`${API_URL}?action=${action}&payload=${encodeURIComponent(JSON.stringify({...payload, token: role==='admin'?ADMIN_TOKEN:USER_TOKEN}))}`).then(x=>x.json());
+    if(r && r.error){
+      alert('No se pudo completar la acción: '+r.error+(r.error==='token invalido'?'\n\nRevisa que la contraseña de Usuario/Administrador sea la misma en Apps Script y en el panel.':''));
+    }
+    return r;
+  }catch(e){ alert('Sin conexión con el servidor. Intenta de nuevo.'); return {error:'red'}; }
+}
 async function post(action,payload){
-  await fetch(`${API_URL}?action=${action}&payload=${encodeURIComponent(JSON.stringify({...payload, token: role==='admin'?ADMIN_TOKEN:USER_TOKEN}))}`);
+  const res=await api(action,payload);
   await loadAll();
+  return res;
 }
 function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function comentarioHTML(o){ return o.comentarios ? `<div class="card small" style="background:var(--bg2);margin-top:8px">📝 <strong>Comentarios:</strong> ${esc(o.comentarios)}</div>` : ''; }
-function fmt(n){ return '$'+Number(n).toFixed(0); }
+function descuentoLinea(o){
+  if(!(o.descuento>0)) return '';
+  const quien=o.descuentoPor==='admin'?'Administrador':o.descuentoPor==='user'?'Usuario':'';
+  return `<div class="card small" style="background:var(--bg2);margin-top:8px">${o.descuento===100?'🎁 <strong>Cortesía</strong>':'🏷️ <strong>Descuento '+o.descuento+'%</strong>'} (valor de lista ${fmt(o.subtotal)})${o.motivoDescuento?' · Motivo: '+esc(o.motivoDescuento):''}${quien?' · Autorizó: '+quien:''}</div>`;
+}
+function comentarioHTML(o){ return (o.comentarios ? `<div class="card small" style="background:var(--bg2);margin-top:8px">📝 <strong>Comentarios:</strong> ${esc(o.comentarios)}</div>` : '') + descuentoLinea(o); }
+function descAvisos(lista){
+  const valor=a=>a.reduce((t,o)=>t+(o.subtotal-o.total),0);
+  const cort=lista.filter(o=>o.descuento===100);
+  const desc=lista.filter(o=>o.descuento>0&&o.descuento<100);
+  return [
+    cort.length?`🎁 ${cort.length} cortesía(s) por valor de ${fmt(valor(cort))} (no suman al total).`:'',
+    desc.length?`🏷️ ${desc.length} venta(s) con descuento: −${fmt(valor(desc))} en total.`:''
+  ].filter(Boolean);
+}
+function descAvisosCard(lista){ const a=descAvisos(lista); return a.length?`<div class="card small" style="background:var(--bg2)">${a.map(x=>`<div style="margin:3px 0">${x}</div>`).join('')}</div>`:''; }
+function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toFixed(2)); }
 function todayStr(d){ return new Date(d).toDateString(); }
 function setTab(t){ tab=t; render(); }
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
@@ -227,16 +253,20 @@ function cartItems(){ return Object.entries(cart).map(([id,q])=>{const p=product
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
 
 async function registrarPedidoManual(metodo){
-  const items=cartItems(); if(items.length===0) return;
-  silenciar=true;
+  const items=cartItems(); if(items.length===0 || registrando) return;
+  if(descuentoPct>0 && !motivoDesc.trim()){ alert('Escribe el motivo del descuento o cortesía.'); return; }
+  registrando=true;
   try{
-  await fetch(`${API_URL}?action=crearPedido&payload=${encodeURIComponent(JSON.stringify({items, total:cartTotal(), cliente:clientLabel, metodo}))}`);
-  await loadAll();
-  const last = orders[0];
-  if(last) await post('aprobarPedido', {id:last.id});
-  cart={}; clientLabel='';
-  } finally { silenciar=false; }
-  render();
+    const res=await api('registrarVenta',{items:items.map(i=>({id:i.id,cantidad:i.cantidad})), cliente:clientLabel, metodo, descuento:descuentoPct, motivo:motivoDesc});
+    if(res && res.ok){ cart={}; clientLabel=''; descuentoPct=0; motivoDesc=''; }
+    await loadAll();
+  } finally { registrando=false; }
+}
+function setDescuento(v){ descuentoPct=v; if(v===0) motivoDesc=''; render(); }
+function quitarItem(id){ delete cart[id]; render(); }
+function vaciarPedido(){
+  if(!confirm('¿Vaciar el pedido actual?')) return;
+  cart={}; clientLabel=''; descuentoPct=0; motivoDesc=''; render();
 }
 async function aprobar(id){ await post('aprobarPedido', {id}); }
 async function marcar(id, estado){ await post('actualizarEstado', {id, estado}); }
@@ -362,16 +392,16 @@ function renderHistorial(){
     <div class="card stat"><div class="n">${enRango.length}</div><div class="l">Pedidos (${cancelados} cancelados)</div></div></div>
     <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
     <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>`;
-  if(list.length===0) return filtros + resumen + '<p class="empty">Sin pedidos con esos filtros.</p>';
+  if(list.length===0) return filtros + resumen + descAvisosCard(ventas) + '<p class="empty">Sin pedidos con esos filtros.</p>';
   const detalle = list.map(o=>`<div class="card">
     <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${o.estado.replace('_',' ')}</span></div>
-    <div class="small">${new Date(o.fecha).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'})}${o.metodo?' · '+(o.metodo==='efectivo'?'💵 Efectivo':'💳 Tarjeta'):''}</div>
+    <div class="small">${new Date(o.fecha).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'})}${o.metodo?' · '+(o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':'🎁 Cortesía'):''}</div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
     ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="small" style="margin-top:6px"><strong>Motivo cancelación:</strong> ${esc(o.motivoCancelacion)}</div>`:''}
   </div>`).join('');
-  return filtros + resumen + detalle;
+  return filtros + resumen + descAvisosCard(ventas) + detalle;
 }
 const ADMIN_VISTA=true;
 function parseTam(nombre){ const m=nombre.match(/^(.*) \((Mediano|Grande)\)$/); return m?{base:m[1],tam:m[2]}:{base:nombre,tam:null}; }
@@ -426,13 +456,20 @@ function renderRegistrar(){
     ${todasCats.map(c=>`<button class="${!buscando&&catActiva===c?'active':''}" onclick="busquedaReg='';catSelReg='${c.replace(/'/g,"\\'")}';render()">${c}</button>`).join('')}
   </div>`;
   const items=cartItems();
-  const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
-    <div class="orderline" style="font-weight:bold;color:var(--accent)"><span>Total</span><span>${fmt(cartTotal())}</span></div>
+  const sub=cartTotal(), pct=descuentoPct;
+  const totalConDesc=Math.round(sub*(100-pct))/100;
+  const chipD=(v,txt)=>`<button class="${descuentoPct===v?'active':''}" onclick="setDescuento(${v})">${txt}</button>`;
+  const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${esc(i.nombre)}</span><span>${fmt(i.precio*i.cantidad)}<button class="xbtn" title="Quitar" onclick="quitarItem('${i.id}')">✕</button></span></div>`).join('')}
+    ${pct>0?`<div class="orderline small"><span>Subtotal</span><span>${fmt(sub)}</span></div><div class="orderline small"><span>${pct===100?'Cortesía':'Descuento '+pct+'%'}</span><span>−${fmt(sub-totalConDesc)}</span></div>`:''}
+    <div class="orderline" style="font-weight:bold;color:var(--accent)"><span>Total</span><span>${fmt(totalConDesc)}</span></div>
+    <label style="margin-top:8px">Descuento</label>
+    <div class="chips" style="padding-bottom:4px">${chipD(0,'Ninguno')}${chipD(10,'10%')}${chipD(15,'15%')}${chipD(100,'🎁 Cortesía')}</div>
+    ${pct>0?`<div style="margin:6px 0"><label>Motivo (obligatorio)</label><input value="${esc(motivoDesc)}" placeholder="Ej: cumpleaños, error en el servicio" oninput="motivoDesc=this.value"></div>`:''}
     <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
-    <div style="display:flex;gap:8px">
-      <button class="primary" style="flex:1" onclick="registrarPedidoManual('efectivo')">💵 Efectivo</button>
-      <button class="primary" style="flex:1" onclick="registrarPedidoManual('tarjeta')">💳 Tarjeta</button>
-    </div></div>`:'';
+    <div style="display:flex;gap:8px">${pct===100
+      ? `<button class="primary" style="flex:1" onclick="registrarPedidoManual('cortesia')">🎁 Registrar cortesía</button>`
+      : `<button class="primary" style="flex:1" onclick="registrarPedidoManual('efectivo')">💵 Efectivo</button><button class="primary" style="flex:1" onclick="registrarPedidoManual('tarjeta')">💳 Tarjeta</button>`}</div>
+    <button class="secondary" style="width:100%;margin-top:8px" onclick="vaciarPedido()">🗑️ Vaciar pedido</button></div>`:'';
   return `<p class="small">Cuando el cliente pague en efectivo o con terminal, registra aquí lo que llevó: descuenta el stock y queda en el reporte del día.</p>
   ${resumen}
   ${buscador}
@@ -454,7 +491,7 @@ function renderReporte(){
   const total=hoy.reduce((s,o)=>s+o.total,0);
   const efectivo=hoy.filter(o=>o.metodo==='efectivo').reduce((s,o)=>s+o.total,0);
   const tarjeta=hoy.filter(o=>o.metodo==='tarjeta').reduce((s,o)=>s+o.total,0);
-  const otro=total-efectivo-tarjeta;
+  const otro=Math.round((total-efectivo-tarjeta)*100)/100;
   const cnt={}; hoy.forEach(o=>o.items.forEach(i=>{cnt[i.nombre]=(cnt[i.nombre]||0)+i.cantidad;}));
   const top=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0];
   return `<div class="stats-row"><div class="card stat"><div class="n">${fmt(total)}</div><div class="l">Venta total hoy</div></div>
@@ -462,6 +499,7 @@ function renderReporte(){
   <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
   <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>
   ${otro>0?`<div class="card small" style="text-align:center">Sin método registrado: ${fmt(otro)}</div>`:''}
+  ${descAvisosCard(hoy)}
   <div class="card"><p class="small" style="margin:0 0 4px">Producto más vendido hoy</p><p style="margin:0;font-weight:bold">${top?top[0]+' ('+top[1]+' uds)':'—'}</p></div>`;
 }
 
@@ -473,22 +511,23 @@ function renderResumen(){
   const efectivo=suma(cobrados.filter(o=>o.metodo==='efectivo'));
   const tarjeta=suma(cobrados.filter(o=>o.metodo==='tarjeta'));
   const total=suma(cobrados);
-  const sinMetodo=total-efectivo-tarjeta;
+  const sinMetodo=Math.round((total-efectivo-tarjeta)*100)/100;
   const pend=delDia.filter(o=>o.estado==='pendiente_pago');
   const enRevision=delDia.filter(o=>o.estado==='cancelacion_solicitada');
   const cancelados=delDia.filter(o=>o.estado==='cancelado');
   const hora=o=>new Date(o.fecha).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
-  const metodo=o=>o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':'Sin método';
+  const metodo=o=>o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':o.metodo==='cortesia'?'🎁 Cortesía':'Sin método';
   const avisos=[
+    ...descAvisos(cobrados),
     pend.length?`⏳ ${pend.length} pedido(s) por cobrar (${fmt(suma(pend))}) aún no cuentan en el total.`:'',
     enRevision.length?`⚠️ ${enRevision.length} pedido(s) con cancelación solicitada (${fmt(suma(enRevision))}) no se incluyen hasta que el administrador los resuelva.`:'',
     cancelados.length?`🚫 ${cancelados.length} pedido(s) cancelado(s) hoy (${fmt(suma(cancelados))}), fuera del total.`:'',
     sinMetodo>0?`Sin método registrado: ${fmt(sinMetodo)}.`:''
   ].filter(Boolean);
   const fecha=new Date().toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'});
-  const detalle=cobrados.length ? cobrados.map(o=>`<div class="orderline small"><span>${hora(o)} · #${o.num} ${esc(o.cliente||'')} · ${metodo(o)}</span><strong>${fmt(o.total)}</strong></div>`).join('')
+  const detalle=cobrados.length ? cobrados.map(o=>`<div class="orderline small"><span>${hora(o)} · #${o.num}${/^Pedido #\d+$/.test(o.cliente||'')?'':' '+esc(o.cliente||'')} · ${metodo(o)}${o.descuento>0&&o.descuento<100?' · −'+o.descuento+'%':''}</span><strong>${fmt(o.total)}</strong></div>`).join('')
     : '<p class="empty">Todavía no hay cobros registrados hoy.</p>';
-  return `<p class="small" style="margin:0 0 10px;text-transform:capitalize">${fecha}</p>
+  return `<p class="small" style="margin:0 0 10px">${fecha.charAt(0).toUpperCase()+fecha.slice(1)}</p>
   <div class="card stat"><div class="n" style="font-size:2rem">${fmt(total)}</div><div class="l">Total cobrado hoy · ${cobrados.length} venta(s)</div></div>
   <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
   <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>
