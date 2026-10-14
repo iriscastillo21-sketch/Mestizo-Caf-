@@ -58,6 +58,7 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <div id="app" style="padding:40px;text-align:center;color:#C9B69C">Cargando menú…</div>
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
+let enviando=false, claveEnvio=null, numPedido=null;
 let products=[], cart={}, step=0, clientLabel='', comentarios='', busqueda='', catSel='', buscadorFoco=false;
 function esc(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function fmt(n){ return '$'+Number(n).toFixed(0); }
@@ -69,17 +70,27 @@ async function loadProducts(){
   }catch(e){ document.getElementById('app').innerHTML = '<p style="padding:40px;text-align:center">No se pudo cargar el menú. Verifica la conexión.</p>'; return; }
   render();
 }
-function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
+function nuevaClave(){ return 'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,10); }
+function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveEnvio=null; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function cartItems(){ return Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); }
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
 function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0); }
 
 let metodoPago = '';
 async function enviarPedido(metodo){
-  const items=cartItems(); if(items.length===0) return;
-  metodoPago = metodo;
-  await fetch(`${API_URL}?action=crearPedido&payload=${encodeURIComponent(JSON.stringify({items, total:cartTotal(), cliente:clientLabel, comentarios:comentarios.trim(), metodo}))}`);
-  cart={}; comentarios=''; step=2; render();
+  const items=cartItems(); if(items.length===0 || enviando) return;
+  enviando=true; metodoPago=metodo;
+  if(!claveEnvio) claveEnvio=nuevaClave();
+  render();
+  try{
+    const payload={items:items.map(i=>({id:i.id,cantidad:i.cantidad})), cliente:clientLabel, comentarios:comentarios.trim(), metodo, clave:claveEnvio};
+    const res=await fetch(`${API_URL}?action=crearPedido&payload=${encodeURIComponent(JSON.stringify(payload))}`).then(r=>r.json());
+    if(res && res.ok){ cart={}; comentarios=''; claveEnvio=null; numPedido=res.num; step=2; }
+    else alert('No pudimos registrar tu pedido'+(res&&res.error?': '+res.error:'')+'. Intenta de nuevo.');
+  }catch(e){
+    alert('No hay conexión. Revisa tu internet e intenta de nuevo: tu pedido no se duplicará.');
+  }
+  enviando=false; render();
 }
 const ADMIN_VISTA=false;
 function parseTam(nombre){ const m=nombre.match(/^(.*) \((Mediano|Grande)\)$/); return m?{base:m[1],tam:m[2]}:{base:nombre,tam:null}; }
@@ -152,8 +163,8 @@ function renderCheckout(){
       <div class="small" style="margin-top:4px">Indica aquí cualquier preferencia o restricción alimenticia.</div></div>
     <label style="margin-bottom:8px">¿Cómo vas a pagar?</label>
     <div class="actions" style="display:flex;gap:10px">
-      <button class="secondary" style="flex:1;padding:14px" onclick="enviarPedido('efectivo')">💵 Efectivo</button>
-      <button class="secondary" style="flex:1;padding:14px" onclick="enviarPedido('tarjeta')">💳 Tarjeta</button>
+      <button class="secondary" style="flex:1;padding:14px" ${enviando?'disabled style="opacity:.6"':''} onclick="enviarPedido('efectivo')">${enviando&&metodoPago==='efectivo'?'Enviando…':'💵 Efectivo'}</button>
+      <button class="secondary" style="flex:1;padding:14px" ${enviando?'disabled style="opacity:.6"':''} onclick="enviarPedido('tarjeta')">${enviando&&metodoPago==='tarjeta'?'Enviando…':'💳 Tarjeta'}</button>
     </div>
     <div style="margin-top:10px"><button class="secondary" onclick="step=0;render()">Volver al menú</button></div>
   </div>`;
@@ -161,7 +172,8 @@ function renderCheckout(){
 function renderDone(){
   const lugar = metodoPago==='efectivo' ? 'pasa al mostrador a pagar en efectivo' : 'espera a que el mesero pase a cobrarte con la terminal';
   return `<div class="card" style="text-align:center">
-    <h2 style="margin-top:0">¡Pedido registrado! 🎉</h2>
+    <h2 style="margin:0 0 4px">¡Pedido registrado! 🎉</h2>
+    ${numPedido?`<div style="font-size:2rem;font-weight:bold;color:var(--accent);margin:6px 0 10px">#${numPedido}</div>`:''}
     <p class="small">Ahora ${lugar}. En cuanto confirmen tu pago, tu pedido pasa a preparación. Te llamaremos en la barra cuando esté listo.</p>
     <button class="secondary" onclick="cart={};step=0;loadProducts()">Hacer otro pedido</button>
   </div>`;
