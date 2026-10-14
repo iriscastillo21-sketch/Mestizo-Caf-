@@ -64,6 +64,11 @@ label{font-size:.78rem;color:var(--ink-dim);display:block;margin-bottom:4px}
 .toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:60;display:none;background:var(--accent);color:var(--accent-ink);font-weight:bold;padding:12px 18px;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.35);max-width:90vw}
 .sound-banner{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:60;display:none;background:var(--card);color:var(--ink);border:1px solid var(--accent);border-radius:20px;padding:10px 16px;font-family:inherit;font-size:.9rem;cursor:pointer}
 .xbtn{background:transparent;border:none;color:var(--ink-dim);cursor:pointer;font-size:.95rem;margin-left:6px;padding:2px 6px}
+.modal-bg{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:16px}
+.modal-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;max-width:380px;width:100%;max-height:92vh;overflow:auto}
+.opt-row{display:flex;gap:8px;margin:6px 0 14px}
+.opt-row button{flex:1;padding:10px 6px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);font-family:inherit;font-size:.9rem;cursor:pointer;line-height:1.25}
+.opt-row button.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:bold}
 .hbtn{padding:6px 10px;font-size:.85rem}
 @media (max-width:600px){header{position:static}}
 .role-badge{font-size:.72rem;color:var(--ink-dim);background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:3px 10px}
@@ -72,6 +77,7 @@ label{font-size:.78rem;color:var(--ink-dim);display:block;margin-bottom:4px}
 <body>
 <div id="watermark" class="watermark"></div>
 <div id="toast" class="toast"></div>
+<div id="sonidoModal" class="modal-bg" onclick="if(event.target===this)cerrarSonido()"></div>
 <button id="soundBanner" class="sound-banner" onclick="activarSonido()">🔕 Toca aquí para activar el sonido de nuevos pedidos</button>
 <!-- ===== CONFIGURA ESTO ===== -->
 <script>
@@ -84,7 +90,8 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
 let products=[], orders=[], cart={}, clientLabel='', tab='pend';
-let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', comentariosReg='', registrando=false;
+let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', comentariosReg='', registrando=false, claveReg=null;
+function nuevaClave(){ return 'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,10); }
 let role = localStorage.getItem('mestizo_role') || null;
 let loginError='';
 let cancelandoId=null, cancelMotivo='';
@@ -103,11 +110,18 @@ function histPreset(tipo){
 let seenIds=null, silenciar=false, pollTimer=null, pollTick=0, renderedSig='', audioCtx=null, toastTimer=null;
 let soundOn = localStorage.getItem('mestizo_sound')!=='off';
 let tono = ['corto','medio','largo'].includes(localStorage.getItem('mestizo_tono')) ? localStorage.getItem('mestizo_tono') : 'medio';
-const TONOS = {
-  corto: { notas:[[880,0],[1175,0.15]], vibra:200 },
-  medio: { notas:[[880,0],[1175,0.15],[880,0.5],[1175,0.65]], vibra:[200,100,200] },
-  largo: { notas:[[880,0],[1175,0.15],[880,0.6],[1175,0.75],[880,1.2],[1175,1.35]], vibra:[250,120,250,120,250] }
+let estilo = ['campana','timbre','alerta'].includes(localStorage.getItem('mestizo_estilo')) ? localStorage.getItem('mestizo_estilo') : 'campana';
+const ESTILOS = {
+  campana:{ nombre:'Campana', wave:'sine',   gain:0.35, decay:0.30, motivo:[[880,0],[1175,0.15]], intervalo:0.55, reps:{corto:1,medio:2,largo:3} },
+  timbre: { nombre:'Timbre',  wave:'sine',   gain:0.40, decay:0.55, motivo:[[784,0],[622,0.4]],   intervalo:1.1,  reps:{corto:1,medio:2,largo:3} },
+  alerta: { nombre:'Alerta',  wave:'square', gain:0.14, decay:0.12, motivo:[[1000,0],[1000,0.17]],intervalo:0.5,  reps:{corto:2,medio:3,largo:5} }
 };
+function duracionAprox(est,dur){
+  const e=ESTILOS[est]; const ult=Math.max(...e.motivo.map(m=>m[1]));
+  return (e.reps[dur]-1)*e.intervalo+ult+e.decay;
+}
+const segTxt=n=>'≈ '+n.toFixed(1).replace(/\.0$/,'')+' s';
+const cap=t=>t.charAt(0).toUpperCase()+t.slice(1);
 function initAudio(){
   try{
     if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
@@ -123,33 +137,56 @@ function activarSonido(){ initAudio(); setTimeout(()=>{ beep(true); updateBanner
 function beep(prueba){
   if(!soundOn && !prueba) return;
   initAudio();
-  const patron=TONOS[tono]||TONOS.medio;
+  const e=ESTILOS[estilo]||ESTILOS.campana, reps=e.reps[tono]||2;
   if(audioListo()){
     try{
       const t0=audioCtx.currentTime+0.02;
-      patron.notas.forEach(([f,d])=>{
-        const o=audioCtx.createOscillator(), g=audioCtx.createGain();
-        o.type='sine'; o.frequency.value=f;
-        g.gain.setValueAtTime(0.0001,t0+d);
-        g.gain.exponentialRampToValueAtTime(0.35,t0+d+0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001,t0+d+0.3);
-        o.connect(g); g.connect(audioCtx.destination);
-        o.start(t0+d); o.stop(t0+d+0.33);
-      });
-    }catch(e){}
+      for(let k=0;k<reps;k++){
+        e.motivo.forEach(([f,d])=>{
+          const t=t0+k*e.intervalo+d;
+          const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+          o.type=e.wave; o.frequency.value=f;
+          g.gain.setValueAtTime(0.0001,t);
+          g.gain.exponentialRampToValueAtTime(e.gain,t+0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001,t+e.decay);
+          o.connect(g); g.connect(audioCtx.destination);
+          o.start(t); o.stop(t+e.decay+0.03);
+        });
+      }
+    }catch(err){}
   }
-  try{ if(navigator.vibrate) navigator.vibrate(patron.vibra); }catch(e){}
+  try{ if(navigator.vibrate){ const v=[]; for(let k=0;k<reps;k++){ v.push(200,100); } navigator.vibrate(v); } }catch(err){}
 }
-// Cada toque al botón cambia: corto → medio → largo → silencio → corto…
-function cycleSound(){
-  const ciclo=['corto','medio','largo','silencio'];
-  const actual=soundOn?tono:'silencio';
-  const sig=ciclo[(ciclo.indexOf(actual)+1)%ciclo.length];
-  if(sig==='silencio'){ soundOn=false; }
-  else { soundOn=true; tono=sig; }
+function guardarSonido(){
   localStorage.setItem('mestizo_sound', soundOn?'on':'off');
   localStorage.setItem('mestizo_tono', tono);
-  if(soundOn){ initAudio(); setTimeout(()=>beep(true),150); }
+  localStorage.setItem('mestizo_estilo', estilo);
+}
+function renderSonidoModal(){
+  const m=document.getElementById('sonidoModal'); if(!m) return;
+  const opt=(grupo,val,html,activo)=>`<button class="${activo?'active':''}" onclick="setSonido('${grupo}','${val}')">${html}</button>`;
+  m.innerHTML=`<div class="modal-card">
+    <h3 style="margin:0 0 4px">🔔 Sonido de pedidos nuevos</h3>
+    <p class="small" style="margin:0 0 14px">Se guarda en este dispositivo. Al elegir una opción suena una prueba.</p>
+    <label>Sonido</label>
+    <div class="opt-row">${Object.keys(ESTILOS).map(k=>opt('estilo',k,ESTILOS[k].nombre,soundOn&&estilo===k)).join('')}</div>
+    <label>Duración</label>
+    <div class="opt-row">${['corto','medio','largo'].map(d=>opt('tono',d,cap(d)+'<br><span style="font-size:.72rem;font-weight:400">'+segTxt(duracionAprox(estilo,d))+'</span>',soundOn&&tono===d)).join('')}</div>
+    <div class="opt-row" style="margin-bottom:10px">${opt('silencio','x',soundOn?'🔕 Silenciar':'🔔 Activar sonido',false)}</div>
+    <div style="display:flex;gap:8px"><button class="primary" style="flex:1" onclick="beep(true)">▶ Probar</button><button class="secondary" style="flex:1" onclick="cerrarSonido()">Cerrar</button></div>
+  </div>`;
+}
+function abrirSonido(){ initAudio(); setTimeout(updateBanner,300); renderSonidoModal(); document.getElementById('sonidoModal').style.display='flex'; }
+function cerrarSonido(){ document.getElementById('sonidoModal').style.display='none'; }
+function setSonido(grupo,val){
+  if(grupo==='estilo'){ estilo=val; soundOn=true; }
+  else if(grupo==='tono'){ tono=val; soundOn=true; }
+  else if(grupo==='silencio'){ soundOn=!soundOn; }
+  guardarSonido();
+  initAudio();
+  setTimeout(updateBanner,300);
+  if(soundOn) setTimeout(()=>beep(true),120);
+  renderSonidoModal();
   render();
 }
 function toast(nuevos){
@@ -261,7 +298,7 @@ function descAvisosCard(lista){ const a=descAvisos(lista); return a.length?`<div
 function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toFixed(2)); }
 function todayStr(d){ return new Date(d).toDateString(); }
 function setTab(t){ tab=t; render(); }
-function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
+function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function cartItems(){ return Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); }
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
 
@@ -269,20 +306,26 @@ async function registrarPedidoManual(metodo){
   const items=cartItems(); if(items.length===0 || registrando) return;
   if(descuentoPct>0 && !motivoDesc.trim()){ alert('Escribe el motivo del descuento o cortesía.'); return; }
   registrando=true;
+  if(!claveReg) claveReg=nuevaClave();
   try{
-    const res=await api('registrarVenta',{items:items.map(i=>({id:i.id,cantidad:i.cantidad})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc});
-    if(res && res.ok){ cart={}; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; }
+    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>({id:i.id,cantidad:i.cantidad})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc});
+    if(res && res.ok){ cart={}; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
     await loadAll();
   } finally { registrando=false; }
 }
 function setDescuento(v){ descuentoPct=v; if(v===0) motivoDesc=''; render(); }
 function addNota(t){ comentariosReg = comentariosReg.trim() ? comentariosReg.trim().replace(/[,.;]$/,'')+', '+t : t; render(); }
-function quitarItem(id){ delete cart[id]; render(); }
+function quitarItem(id){ delete cart[id]; claveReg=null; render(); }
 function vaciarPedido(){
   if(!confirm('¿Vaciar el pedido actual?')) return;
-  cart={}; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; render();
+  cart={}; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
 }
-async function aprobar(id){ await post('aprobarPedido', {id}); }
+const aprobando=new Set();
+async function aprobar(id){
+  if(aprobando.has(id)) return;
+  aprobando.add(id);
+  try{ await post('aprobarPedido', {id}); } finally { aprobando.delete(id); }
+}
 async function marcar(id, estado){ await post('actualizarEstado', {id, estado}); }
 
 function abrirCancelacion(id){ cancelandoId=id; cancelMotivo=''; render(); }
@@ -585,9 +628,9 @@ function render(){
     <button class="${tab==='reporte'?'active':''}" onclick="setTab('reporte')">Reporte</button>` : '';
   document.getElementById('app').innerHTML = `<header style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
   <img src="${LOGO_DATAURI}" alt="Mestizo Café" style="height:32px;width:auto">
-  <h1 style="margin:0;flex:1;min-width:0;font-size:1.05rem">Panel · Mestizo Café</h1>
+  <h1 style="margin:0;flex:1 1 150px;font-size:1.05rem">Panel · Mestizo Café</h1>
   <span class="role-badge">${role==='admin'?'👑 Admin':'👤 Usuario'}</span>
-  <button class="secondary hbtn" title="Toca para cambiar la duración del tono: corto, medio, largo o silencio" onclick="cycleSound()">${soundOn?'🔔 '+tono.charAt(0).toUpperCase()+tono.slice(1):'🔕 Silencio'}</button>
+  <button class="secondary hbtn" style="font-size:.78rem" title="Elegir sonido y duración" onclick="abrirSonido()">${soundOn?'🔔 '+ESTILOS[estilo].nombre+' · '+cap(tono):'🔕 Silencio'}</button>
   <button class="secondary hbtn" onclick="logout()">Salir</button>
   <div class="sub" style="width:100%">
     <button class="${tab==='pend'?'active':''}" onclick="setTab('pend')">Por aprobar${pendN>0?' ('+pendN+')':''}</button>
