@@ -102,6 +102,12 @@ function histPreset(tipo){
 
 let seenIds=null, silenciar=false, pollTimer=null, pollTick=0, renderedSig='', audioCtx=null, toastTimer=null;
 let soundOn = localStorage.getItem('mestizo_sound')!=='off';
+let tono = ['corto','medio','largo'].includes(localStorage.getItem('mestizo_tono')) ? localStorage.getItem('mestizo_tono') : 'medio';
+const TONOS = {
+  corto: { notas:[[880,0],[1175,0.15]], vibra:200 },
+  medio: { notas:[[880,0],[1175,0.15],[880,0.5],[1175,0.65]], vibra:[200,100,200] },
+  largo: { notas:[[880,0],[1175,0.15],[880,0.6],[1175,0.75],[880,1.2],[1175,1.35]], vibra:[250,120,250,120,250] }
+};
 function initAudio(){
   try{
     if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
@@ -117,25 +123,32 @@ function activarSonido(){ initAudio(); setTimeout(()=>{ beep(true); updateBanner
 function beep(prueba){
   if(!soundOn && !prueba) return;
   initAudio();
+  const patron=TONOS[tono]||TONOS.medio;
   if(audioListo()){
     try{
       const t0=audioCtx.currentTime+0.02;
-      [[880,0],[1175,0.15]].forEach(([f,d])=>{
+      patron.notas.forEach(([f,d])=>{
         const o=audioCtx.createOscillator(), g=audioCtx.createGain();
         o.type='sine'; o.frequency.value=f;
         g.gain.setValueAtTime(0.0001,t0+d);
         g.gain.exponentialRampToValueAtTime(0.35,t0+d+0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001,t0+d+0.22);
+        g.gain.exponentialRampToValueAtTime(0.0001,t0+d+0.3);
         o.connect(g); g.connect(audioCtx.destination);
-        o.start(t0+d); o.stop(t0+d+0.25);
+        o.start(t0+d); o.stop(t0+d+0.33);
       });
     }catch(e){}
   }
-  try{ if(navigator.vibrate) navigator.vibrate(200); }catch(e){}
+  try{ if(navigator.vibrate) navigator.vibrate(patron.vibra); }catch(e){}
 }
-function toggleSound(){
-  soundOn=!soundOn;
+// Cada toque al botón cambia: corto → medio → largo → silencio → corto…
+function cycleSound(){
+  const ciclo=['corto','medio','largo','silencio'];
+  const actual=soundOn?tono:'silencio';
+  const sig=ciclo[(ciclo.indexOf(actual)+1)%ciclo.length];
+  if(sig==='silencio'){ soundOn=false; }
+  else { soundOn=true; tono=sig; }
   localStorage.setItem('mestizo_sound', soundOn?'on':'off');
+  localStorage.setItem('mestizo_tono', tono);
   if(soundOn){ initAudio(); setTimeout(()=>beep(true),150); }
   render();
 }
@@ -574,7 +587,7 @@ function render(){
   <img src="${LOGO_DATAURI}" alt="Mestizo Café" style="height:32px;width:auto">
   <h1 style="margin:0;flex:1;min-width:0;font-size:1.05rem">Panel · Mestizo Café</h1>
   <span class="role-badge">${role==='admin'?'👑 Admin':'👤 Usuario'}</span>
-  <button class="secondary hbtn" title="Sonido de nuevos pedidos" onclick="toggleSound()">${soundOn?'🔔':'🔕'}</button>
+  <button class="secondary hbtn" title="Toca para cambiar la duración del tono: corto, medio, largo o silencio" onclick="cycleSound()">${soundOn?'🔔 '+tono.charAt(0).toUpperCase()+tono.slice(1):'🔕 Silencio'}</button>
   <button class="secondary hbtn" onclick="logout()">Salir</button>
   <div class="sub" style="width:100%">
     <button class="${tab==='pend'?'active':''}" onclick="setTab('pend')">Por aprobar${pendN>0?' ('+pendN+')':''}</button>
