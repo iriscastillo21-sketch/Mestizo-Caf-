@@ -159,7 +159,7 @@ function detectNew(list){
   if(nuevos.length && !silenciar){ beep(); toast(nuevos); }
 }
 function dataSig(){
-  return JSON.stringify(orders.map(o=>[o.id,o.estado,o.motivoCancelacion,o.fechaCancelacion]))+JSON.stringify(products.map(p=>[p.id,p.stock,p.precio]));
+  return JSON.stringify(orders.map(o=>[o.id,o.estado,o.motivoCancelacion,o.fechaCancelacion]))+JSON.stringify(products.map(p=>[p.id,p.stock,p.precio]))+JSON.stringify(insumos.map(i=>[i.id,i.stock,i.minimo]));
 }
 function escribiendo(){
   const a=document.activeElement;
@@ -180,6 +180,7 @@ async function poll(){
     if(pollTick%3===0){
       const pr=await fetch(`${API_URL}?action=productos`).then(r=>r.json());
       if(Array.isArray(pr)) products=pr;
+      await cargarInsumos(tab==='ins');
     }
     orders=pe.sort((a,b)=> new Date(b.fecha)-new Date(a.fecha));
     detectNew(orders);
@@ -209,10 +210,25 @@ async function init(){
   await loadAll();
   startPolling();
 }
+let insumos=[], movs=[], insumosError='';
+async function leerAuth(action,payload){
+  const tk = role==='admin'?ADMIN_TOKEN:USER_TOKEN;
+  return fetch(`${API_URL}?action=${action}&payload=${encodeURIComponent(JSON.stringify({...(payload||{}), token:tk}))}`).then(r=>r.json());
+}
+async function cargarInsumos(conMovs){
+  if(!role) return;
+  try{
+    const r = await leerAuth('insumos');
+    if(Array.isArray(r)){ insumos=r; insumosError=''; }
+    else insumosError = (r&&r.error==='accion desconocida') ? 'Falta actualizar Codigo.gs en Apps Script (Nueva versión) para usar Insumos.' : 'No se pudieron cargar los insumos.';
+    if(conMovs && !insumosError){ const m = await leerAuth('movimientos'); if(Array.isArray(m)) movs=m; }
+  }catch(e){ insumosError='No se pudieron cargar los insumos.'; }
+}
 async function loadAll(){
   const [pr, pe] = await Promise.all([
     fetch(`${API_URL}?action=productos`).then(r=>r.json()),
-    fetch(`${API_URL}?action=pedidos`).then(r=>r.json())
+    fetch(`${API_URL}?action=pedidos`).then(r=>r.json()),
+    cargarInsumos(tab==='ins')
   ]);
   products = pr; orders = pe.sort((a,b)=> new Date(b.fecha)-new Date(a.fecha));
   detectNew(orders);
@@ -251,7 +267,7 @@ function descAvisos(lista){
 function descAvisosCard(lista){ const a=descAvisos(lista); return a.length?`<div class="card small" style="background:var(--bg2)">${a.map(x=>`<div style="margin:3px 0">${x}</div>`).join('')}</div>`:''; }
 function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toFixed(2)); }
 function todayStr(d){ return new Date(d).toDateString(); }
-function setTab(t){ tab=t; render(); }
+function setTab(t){ tab=t; render(); if(t==='ins') cargarInsumos(true).then(()=>{ if(tab==='ins' && !escribiendo()) render(); }); }
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function cartItems(){ return Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); }
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
@@ -543,6 +559,77 @@ function renderRegistrar(){
   ${buscador}
   <div class="card lista">${html}</div>`;
 }
+let busquedaIns='', catIns='', insHist=null;
+function fmtNum(n){ return String(Math.round(Number(n)*1000)/1000); }
+async function movimientoInsumo(id,tipo){
+  const cant=document.getElementById('i-cant-'+id).value;
+  const motivo=(document.getElementById('i-mot-'+id)||{}).value||'';
+  if(cant===''||isNaN(Number(cant))){ alert('Escribe la cantidad.'); return; }
+  const r=await api('registrarMovimiento',{id,tipo,cantidad:Number(cant),motivo});
+  await cargarInsumos(true); render();
+  return r;
+}
+async function agregarInsumo(){
+  const nombre=document.getElementById('ni-nombre').value.trim();
+  if(!nombre){ alert('Escribe el nombre del insumo.'); return; }
+  await api('agregarInsumo',{nombre,categoria:document.getElementById('ni-cat').value.trim()||'Otros',unidad:document.getElementById('ni-uni').value,
+    stock:Number(document.getElementById('ni-stock').value)||0,minimo:Number(document.getElementById('ni-min').value)||0,costo:Number(document.getElementById('ni-costo').value)||0});
+  await cargarInsumos(true); render();
+}
+async function guardarInsumo(id){
+  const g=k=>document.getElementById(k+id).value;
+  await api('editarInsumo',{id,nombre:g('e-nombre-'),categoria:g('e-cat-'),unidad:g('e-uni-'),minimo:Number(g('e-min-'))||0,costo:Number(g('e-costo-'))||0});
+  await cargarInsumos(true); render();
+}
+function verHistorialInsumo(id){ insHist = insHist===id ? null : id; render(); }
+function renderInsumos(){
+  const esAdmin = role==='admin';
+  if(insumosError) return `<div class="card"><p style="margin:0">⚠️ ${esc(insumosError)}</p></div>`;
+  const cats=[...new Set(insumos.map(i=>i.categoria||'Otros'))];
+  const q=busquedaIns.trim().toLowerCase();
+  const catActiva=cats.includes(catIns)?catIns:cats[0];
+  const lista=q ? insumos.filter(i=>(i.nombre||'').toLowerCase().includes(q)||(i.categoria||'').toLowerCase().includes(q))
+                : insumos.filter(i=>(i.categoria||'Otros')===catActiva);
+  const bajos=insumos.filter(i=>i.minimo>0 && i.stock<=i.minimo);
+  const alerta = bajos.length ? `<div class="card" style="border:2px solid #c0392b"><strong>⚠️ Por agotarse (${bajos.length})</strong>
+    ${bajos.map(i=>`<div class="orderline small"><span>${esc(i.nombre)}</span><span><strong style="color:#c0392b">${fmtNum(i.stock)} ${esc(i.unidad)}</strong> · mín. ${fmtNum(i.minimo)}</span></div>`).join('')}</div>` : '';
+  const valor = esAdmin ? insumos.reduce((t,i)=>t+i.stock*(i.costo||0),0) : 0;
+  const resumen = esAdmin ? `<div class="stats-row"><div class="card stat"><div class="n">${insumos.length}</div><div class="l">Insumos</div></div>
+    <div class="card stat"><div class="n">${fmt(valor)}</div><div class="l">Valor en bodega</div></div></div>` : '';
+  const agregar = esAdmin ? `<details class="card"><summary><strong>+ Agregar insumo</strong></summary>
+    <div class="row" style="margin-top:8px"><div><label>Nombre</label><input id="ni-nombre" placeholder="Leche entera"></div><div><label>Categoría</label><input id="ni-cat" placeholder="Lácteos"></div></div>
+    <div class="row" style="margin-top:8px"><div><label>Unidad</label><select id="ni-uni">${['kg','g','L','ml','pza'].map(u=>`<option>${u}</option>`).join('')}</select></div><div><label>Stock inicial</label><input id="ni-stock" type="number" step="any"></div></div>
+    <div class="row" style="margin-top:8px"><div><label>Stock mínimo</label><input id="ni-min" type="number" step="any"></div><div><label>Costo por unidad ($)</label><input id="ni-costo" type="number" step="any"></div></div>
+    <button class="primary" style="margin-top:10px" onclick="agregarInsumo()">+ Agregar</button></details>` : '';
+  const buscador = `<div class="card">
+    <input id="insBuscar" type="search" placeholder="🔍 Buscar insumo…" value="${esc(busquedaIns)}" oninput="busquedaIns=this.value;render()" autocomplete="off">
+    <div class="chips" style="margin-top:8px">${cats.map(c=>`<button class="${!q&&c===catActiva?'active':''}" data-c="${esc(c)}" onclick="catIns=this.dataset.c;busquedaIns='';render()">${esc(c)}</button>`).join('')}</div>
+    <div class="small" style="margin-top:6px">${lista.length} insumo${lista.length===1?'':'s'}${q?' encontrados':' en '+esc(catActiva||'')}</div></div>`;
+  const tipoTxt={entrada:'➕ Entrada',merma:'🗑️ Merma',conteo:'🔢 Conteo'};
+  const filaMov=m=>`<div class="orderline small"><span>${cuandoTxt(m.fecha)} · ${tipoTxt[m.tipo]||m.tipo}${m.insumo&&insHist===null?' · '+esc(m.insumo):''}${m.motivo?' · '+esc(m.motivo):''} <em>(${m.por==='admin'?'Admin':'Staff'})</em></span><span>${m.cantidad>0?'+':''}${fmtNum(m.cantidad)} → ${fmtNum(m.stock)}</span></div>`;
+  const tarjetas = lista.length ? lista.map(i=>{
+    const bajo=i.minimo>0 && i.stock<=i.minimo;
+    const hist = insHist===i.id ? `<div style="margin-top:8px">${movs.filter(m=>m.insumoId===i.id).slice(0,15).map(filaMov).join('')||'<p class="empty small">Sin movimientos.</p>'}</div>` : '';
+    const editar = esAdmin ? `<details style="margin-top:8px"><summary class="small">✏️ Editar datos del insumo</summary>
+      <div class="row" style="margin-top:8px"><div><label>Nombre</label><input id="e-nombre-${i.id}" value="${esc(i.nombre)}"></div><div><label>Categoría</label><input id="e-cat-${i.id}" value="${esc(i.categoria)}"></div></div>
+      <div class="row" style="margin-top:8px"><div><label>Unidad</label><input id="e-uni-${i.id}" value="${esc(i.unidad)}"></div><div><label>Mínimo</label><input id="e-min-${i.id}" type="number" step="any" value="${i.minimo}"></div></div>
+      <div class="row" style="margin-top:8px"><div><label>Costo por unidad ($)</label><input id="e-costo-${i.id}" type="number" step="any" value="${i.costo||0}"></div></div>
+      <button class="secondary" style="margin-top:8px" onclick="guardarInsumo('${i.id}')">Guardar datos</button></details>` : '';
+    return `<div class="card"${bajo?' style="border:2px solid #c0392b"':''}>
+      <div class="orderline"><strong>${esc(i.nombre)}</strong><span class="small">${esc(i.categoria)}</span></div>
+      <div class="orderline"><span style="font-size:1.3rem;font-weight:bold${bajo?';color:#c0392b':''}">${fmtNum(i.stock)} ${esc(i.unidad)}</span><span class="small">${bajo?'⚠️ ':''}mínimo ${fmtNum(i.minimo)}</span></div>
+      <div class="row" style="margin-top:8px"><div><label>Cantidad (${esc(i.unidad)})</label><input id="i-cant-${i.id}" type="number" step="any" inputmode="decimal"></div>
+      <div><label>Motivo (obligatorio en merma)</label><input id="i-mot-${i.id}" placeholder="Caducó, se derramó…"></div></div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        <button class="primary" style="flex:1" onclick="movimientoInsumo('${i.id}','entrada')">➕ Entrada</button>
+        <button class="secondary" style="flex:1" onclick="movimientoInsumo('${i.id}','merma')">🗑️ Merma</button>
+        <button class="secondary" style="flex:1" onclick="movimientoInsumo('${i.id}','conteo')">🔢 Conteo</button></div>
+      <button class="secondary" style="margin-top:6px;width:100%" onclick="verHistorialInsumo('${i.id}')">${insHist===i.id?'Ocultar':'Ver'} movimientos</button>
+      ${hist}${editar}</div>`; }).join('')
+    : `<p class="empty">${insumos.length?'No se encontró ningún insumo.':'Aún no hay insumos registrados.'+(esAdmin?' Agrega el primero arriba.':' El administrador debe darlos de alta.')}</p>`;
+  const recientes = `<details class="card"><summary><strong>Últimos movimientos</strong></summary><div style="margin-top:8px">${movs.slice(0,30).map(filaMov).join('')||'<p class="empty small">Aún no hay movimientos.</p>'}</div></details>`;
+  return alerta + resumen + agregar + buscador + tarjetas + recientes;
+}
 let busquedaInv='', catInv='';
 function renderInventario(){
   const esAdmin = role==='admin';
@@ -637,15 +724,16 @@ function render(){
   }
   const scrollY = window.scrollY;
   const af = document.activeElement;
-  const focoId = af && af.id==='invBuscar' ? af.id : null;
+  const focoId = af && (af.id==='invBuscar'||af.id==='insBuscar') ? af.id : null;
   const focoPos = focoId ? af.selectionStart : 0;
   const chipsEl = document.getElementById('chipsReg');
   const chipsScroll = chipsEl ? chipsEl.scrollLeft : 0;
   const cancTab = orders.filter(o=>o.estado==='cancelacion_solicitada').length;
   const pendN = orders.filter(o=>o.estado==='pendiente_pago').length;
+  const bajosN = insumos.filter(i=>i.minimo>0 && i.stock<=i.minimo).length;
   const body = tab==='pend'?renderPendientes():tab==='hoy'?renderHoy():tab==='reg'?renderRegistrar():
                tab==='res'?renderResumen():tab==='canc'?renderCancelaciones():tab==='hist'?renderHistorial():
-               tab==='inv'?renderInventario():renderReporte();
+               tab==='inv'?renderInventario():tab==='ins'?renderInsumos():renderReporte();
   const tabsAdmin = role==='admin' ? `
     <button class="${tab==='canc'?'active':''}" onclick="setTab('canc')">Cancelaciones${cancTab>0?' ('+cancTab+')':''}</button>
     <button class="${tab==='hist'?'active':''}" onclick="setTab('hist')">Historial</button>
@@ -661,6 +749,7 @@ function render(){
     <button class="${tab==='reg'?'active':''}" onclick="setTab('reg')">Registrar manual</button>
     <button class="${tab==='res'?'active':''}" onclick="setTab('res')">Resumen del día</button>
     <button class="${tab==='inv'?'active':''}" onclick="setTab('inv')">Inventario</button>
+    <button class="${tab==='ins'?'active':''}" onclick="setTab('ins')">Insumos${bajosN>0?' ⚠️'+bajosN:''}</button>
     ${tabsAdmin}
   </div></header><main>${body}</main>`;
   window.scrollTo(0, scrollY);
