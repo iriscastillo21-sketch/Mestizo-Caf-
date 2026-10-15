@@ -596,8 +596,8 @@ function renderInsumos(){
   const valor = esAdmin ? insumos.reduce((t,i)=>t+i.stock*(i.costo||0),0) : 0;
   const resumen = esAdmin ? `<div class="stats-row"><div class="card stat"><div class="n">${insumos.length}</div><div class="l">Insumos</div></div>
     <div class="card stat"><div class="n">${fmt(valor)}</div><div class="l">Valor en bodega</div></div></div>` : '';
-  const agregar = esAdmin ? `<details class="card"><summary><strong>+ Agregar insumo</strong></summary>
-    <div class="row" style="margin-top:8px"><div><label>Nombre</label><input id="ni-nombre" placeholder="Leche entera"></div><div><label>Categoría</label><input id="ni-cat" placeholder="Lácteos"></div></div>
+  const agregar = esAdmin ? `<details class="card"${insumos.length===0?' open':''}><summary style="cursor:pointer;font-weight:bold;font-size:1.05rem">➕ Agregar insumo manualmente</summary>
+    <div class="row" style="margin-top:8px"><div><label>Nombre</label><input id="ni-nombre" placeholder="Leche entera"></div><div><label>Categoría</label><input id="ni-cat" list="ni-cats" placeholder="Lácteos"><datalist id="ni-cats">${cats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div></div>
     <div class="row" style="margin-top:8px"><div><label>Unidad</label><select id="ni-uni">${['kg','g','L','ml','pza'].map(u=>`<option>${u}</option>`).join('')}</select></div><div><label>Stock inicial</label><input id="ni-stock" type="number" step="any"></div></div>
     <div class="row" style="margin-top:8px"><div><label>Stock mínimo</label><input id="ni-min" type="number" step="any"></div><div><label>Costo por unidad ($)</label><input id="ni-costo" type="number" step="any"></div></div>
     <button class="primary" style="margin-top:10px" onclick="agregarInsumo()">+ Agregar</button></details>` : '';
