@@ -64,11 +64,6 @@ label{font-size:.78rem;color:var(--ink-dim);display:block;margin-bottom:4px}
 .toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:60;display:none;background:var(--accent);color:var(--accent-ink);font-weight:bold;padding:12px 18px;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.35);max-width:90vw}
 .sound-banner{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:60;display:none;background:var(--card);color:var(--ink);border:1px solid var(--accent);border-radius:20px;padding:10px 16px;font-family:inherit;font-size:.9rem;cursor:pointer}
 .xbtn{background:transparent;border:none;color:var(--ink-dim);cursor:pointer;font-size:.95rem;margin-left:6px;padding:2px 6px}
-.modal-bg{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:16px}
-.modal-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;max-width:380px;width:100%;max-height:92vh;overflow:auto}
-.opt-row{display:flex;gap:8px;margin:6px 0 14px}
-.opt-row button{flex:1;padding:10px 6px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);font-family:inherit;font-size:.9rem;cursor:pointer;line-height:1.25}
-.opt-row button.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:bold}
 .hbtn{padding:6px 10px;font-size:.85rem}
 @media (max-width:600px){header{position:static}}
 .role-badge{font-size:.72rem;color:var(--ink-dim);background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:3px 10px}
@@ -77,7 +72,6 @@ label{font-size:.78rem;color:var(--ink-dim);display:block;margin-bottom:4px}
 <body>
 <div id="watermark" class="watermark"></div>
 <div id="toast" class="toast"></div>
-<div id="sonidoModal" class="modal-bg" onclick="if(event.target===this)cerrarSonido()"></div>
 <button id="soundBanner" class="sound-banner" onclick="activarSonido()">🔕 Toca aquí para activar el sonido de nuevos pedidos</button>
 <!-- ===== CONFIGURA ESTO ===== -->
 <script>
@@ -108,20 +102,9 @@ function histPreset(tipo){
 }
 
 let seenIds=null, silenciar=false, pollTimer=null, pollTick=0, renderedSig='', audioCtx=null, toastTimer=null;
-let soundOn = localStorage.getItem('mestizo_sound')!=='off';
-let tono = ['corto','medio','largo'].includes(localStorage.getItem('mestizo_tono')) ? localStorage.getItem('mestizo_tono') : 'medio';
-let estilo = ['campana','timbre','alerta'].includes(localStorage.getItem('mestizo_estilo')) ? localStorage.getItem('mestizo_estilo') : 'campana';
-const ESTILOS = {
-  campana:{ nombre:'Campana', wave:'sine',   gain:0.35, decay:0.30, motivo:[[880,0],[1175,0.15]], intervalo:0.55, reps:{corto:1,medio:2,largo:3} },
-  timbre: { nombre:'Timbre',  wave:'sine',   gain:0.40, decay:0.55, motivo:[[784,0],[622,0.4]],   intervalo:1.1,  reps:{corto:1,medio:2,largo:3} },
-  alerta: { nombre:'Alerta',  wave:'square', gain:0.14, decay:0.12, motivo:[[1000,0],[1000,0.17]],intervalo:0.5,  reps:{corto:2,medio:3,largo:5} }
-};
-function duracionAprox(est,dur){
-  const e=ESTILOS[est]; const ult=Math.max(...e.motivo.map(m=>m[1]));
-  return (e.reps[dur]-1)*e.intervalo+ult+e.decay;
-}
-const segTxt=n=>'≈ '+n.toFixed(1).replace(/\.0$/,'')+' s';
-const cap=t=>t.charAt(0).toUpperCase()+t.slice(1);
+// Sonido fijo: campana con volumen alto. No hay opción para silenciarlo ni cambiarlo.
+['mestizo_sound','mestizo_tono','mestizo_estilo'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
+const SONIDO = { wave:'sine', gain:0.7, decay:0.30, motivo:[[880,0],[1175,0.15]], intervalo:0.55, reps:2 };
 function initAudio(){
   try{
     if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
@@ -129,65 +112,36 @@ function initAudio(){
   }catch(e){}
 }
 function audioListo(){ return !!audioCtx && audioCtx.state==='running'; }
+// Aviso para el primer toque: los navegadores no permiten sonido hasta que alguien toca la pantalla
 function updateBanner(){
   const b=document.getElementById('soundBanner');
-  if(b) b.style.display = (role && soundOn && !audioListo()) ? 'block' : 'none';
+  if(b) b.style.display = (role && !audioListo()) ? 'block' : 'none';
 }
-function activarSonido(){ initAudio(); setTimeout(()=>{ beep(true); updateBanner(); },150); }
-function beep(prueba){
-  if(!soundOn && !prueba) return;
+function activarSonido(){ initAudio(); setTimeout(()=>{ beep(); updateBanner(); },150); }
+function beep(){
   initAudio();
-  const e=ESTILOS[estilo]||ESTILOS.campana, reps=e.reps[tono]||2;
   if(audioListo()){
     try{
       const t0=audioCtx.currentTime+0.02;
-      for(let k=0;k<reps;k++){
-        e.motivo.forEach(([f,d])=>{
-          const t=t0+k*e.intervalo+d;
+      // el compresor deja subir el volumen sin que el sonido se distorsione
+      const comp = audioCtx.createDynamicsCompressor ? audioCtx.createDynamicsCompressor() : null;
+      if(comp){ comp.threshold.value=-10; comp.knee.value=6; comp.ratio.value=8; comp.attack.value=0.003; comp.release.value=0.15; comp.connect(audioCtx.destination); }
+      const destino = comp || audioCtx.destination;
+      for(let k=0;k<SONIDO.reps;k++){
+        SONIDO.motivo.forEach(([f,d])=>{
+          const t=t0+k*SONIDO.intervalo+d;
           const o=audioCtx.createOscillator(), g=audioCtx.createGain();
-          o.type=e.wave; o.frequency.value=f;
+          o.type=SONIDO.wave; o.frequency.value=f;
           g.gain.setValueAtTime(0.0001,t);
-          g.gain.exponentialRampToValueAtTime(e.gain,t+0.02);
-          g.gain.exponentialRampToValueAtTime(0.0001,t+e.decay);
-          o.connect(g); g.connect(audioCtx.destination);
-          o.start(t); o.stop(t+e.decay+0.03);
+          g.gain.exponentialRampToValueAtTime(SONIDO.gain,t+0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001,t+SONIDO.decay);
+          o.connect(g); g.connect(destino);
+          o.start(t); o.stop(t+SONIDO.decay+0.03);
         });
       }
     }catch(err){}
   }
-  try{ if(navigator.vibrate){ const v=[]; for(let k=0;k<reps;k++){ v.push(200,100); } navigator.vibrate(v); } }catch(err){}
-}
-function guardarSonido(){
-  localStorage.setItem('mestizo_sound', soundOn?'on':'off');
-  localStorage.setItem('mestizo_tono', tono);
-  localStorage.setItem('mestizo_estilo', estilo);
-}
-function renderSonidoModal(){
-  const m=document.getElementById('sonidoModal'); if(!m) return;
-  const opt=(grupo,val,html,activo)=>`<button class="${activo?'active':''}" onclick="setSonido('${grupo}','${val}')">${html}</button>`;
-  m.innerHTML=`<div class="modal-card">
-    <h3 style="margin:0 0 4px">🔔 Sonido de pedidos nuevos</h3>
-    <p class="small" style="margin:0 0 14px">Se guarda en este dispositivo. Al elegir una opción suena una prueba.</p>
-    <label>Sonido</label>
-    <div class="opt-row">${Object.keys(ESTILOS).map(k=>opt('estilo',k,ESTILOS[k].nombre,soundOn&&estilo===k)).join('')}</div>
-    <label>Duración</label>
-    <div class="opt-row">${['corto','medio','largo'].map(d=>opt('tono',d,cap(d)+'<br><span style="font-size:.72rem;font-weight:400">'+segTxt(duracionAprox(estilo,d))+'</span>',soundOn&&tono===d)).join('')}</div>
-    <div class="opt-row" style="margin-bottom:10px">${opt('silencio','x',soundOn?'🔕 Silenciar':'🔔 Activar sonido',false)}</div>
-    <div style="display:flex;gap:8px"><button class="primary" style="flex:1" onclick="beep(true)">▶ Probar</button><button class="secondary" style="flex:1" onclick="cerrarSonido()">Cerrar</button></div>
-  </div>`;
-}
-function abrirSonido(){ initAudio(); setTimeout(updateBanner,300); renderSonidoModal(); document.getElementById('sonidoModal').style.display='flex'; }
-function cerrarSonido(){ document.getElementById('sonidoModal').style.display='none'; }
-function setSonido(grupo,val){
-  if(grupo==='estilo'){ estilo=val; soundOn=true; }
-  else if(grupo==='tono'){ tono=val; soundOn=true; }
-  else if(grupo==='silencio'){ soundOn=!soundOn; }
-  guardarSonido();
-  initAudio();
-  setTimeout(updateBanner,300);
-  if(soundOn) setTimeout(()=>beep(true),120);
-  renderSonidoModal();
-  render();
+  try{ if(navigator.vibrate){ const v=[]; for(let k=0;k<SONIDO.reps;k++){ v.push(200,100); } navigator.vibrate(v); } }catch(err){}
 }
 function toast(nuevos){
   const t=document.getElementById('toast'); if(!t) return;
@@ -630,7 +584,6 @@ function render(){
   <img src="${LOGO_DATAURI}" alt="Mestizo Café" style="height:32px;width:auto">
   <h1 style="margin:0;flex:1 1 150px;font-size:1.05rem">Panel · Mestizo Café</h1>
   <span class="role-badge">${role==='admin'?'👑 Admin':'👤 Usuario'}</span>
-  <button class="secondary hbtn" style="font-size:.78rem" title="Elegir sonido y duración" onclick="abrirSonido()">${soundOn?'🔔 '+ESTILOS[estilo].nombre+' · '+cap(tono):'🔕 Silencio'}</button>
   <button class="secondary hbtn" onclick="logout()">Salir</button>
   <div class="sub" style="width:100%">
     <button class="${tab==='pend'?'active':''}" onclick="setTab('pend')">Por aprobar${pendN>0?' ('+pendN+')':''}</button>
