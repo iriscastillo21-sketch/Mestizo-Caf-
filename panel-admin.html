@@ -159,7 +159,7 @@ function detectNew(list){
   if(nuevos.length && !silenciar){ beep(); toast(nuevos); }
 }
 function dataSig(){
-  return JSON.stringify(orders.map(o=>[o.id,o.estado,o.motivoCancelacion]))+JSON.stringify(products.map(p=>[p.id,p.stock,p.precio]));
+  return JSON.stringify(orders.map(o=>[o.id,o.estado,o.motivoCancelacion,o.fechaCancelacion]))+JSON.stringify(products.map(p=>[p.id,p.stock,p.precio]));
 }
 function escribiendo(){
   const a=document.activeElement;
@@ -307,9 +307,13 @@ async function agregarProducto(){
   await post('agregarProducto', {nombre,precio,stock,categoria});
 }
 async function guardarProducto(id){
-  const precio=Number(document.getElementById('p-precio-'+id).value)||0;
   const stock=Number(document.getElementById('p-stock-'+id).value)||0;
-  await post('actualizarStock', {id, precio, stock});
+  if(role==='admin'){
+    const precio=Number(document.getElementById('p-precio-'+id).value)||0;
+    await post('actualizarStock', {id, precio, stock});
+  } else {
+    await post('actualizarStock', {id, stock});
+  }
 }
 
 function botonesCancelacion(o){
@@ -359,19 +363,69 @@ function renderHoy(){
     ${botonesCancelacion(o)}
     </div>`).join('');
 }
-function renderCancelaciones(){
-  const list = orders.filter(o=>o.estado==='cancelacion_solicitada');
-  if(list.length===0) return '<p class="empty">No hay solicitudes de cancelación pendientes.</p>';
-  return list.map(o=>`<div class="card">
-    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill cancelacion_solicitada">solicitada</span></div>
-    ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
+let cancDesde = fechaLocal(new Date()), cancHasta = fechaLocal(new Date()), cancRapido = 'hoy', cancVista = 'todos';
+function cancPreset(tipo){
+  const hoy = new Date(); const d = new Date();
+  cancRapido = tipo;
+  if(tipo==='hoy'){ cancDesde=cancHasta=fechaLocal(hoy); }
+  else if(tipo==='ayer'){ d.setDate(d.getDate()-1); cancDesde=cancHasta=fechaLocal(d); }
+  else if(tipo==='7d'){ d.setDate(d.getDate()-6); cancDesde=fechaLocal(d); cancHasta=fechaLocal(hoy); }
+  else if(tipo==='mes'){ cancDesde=fechaLocal(new Date(hoy.getFullYear(),hoy.getMonth(),1)); cancHasta=fechaLocal(hoy); }
+  render();
+}
+function fechaCanc(o){ return o.fechaCancelacion || o.fecha; }   // si no hay fecha de solicitud (pedidos viejos), usa la del pedido
+function cuandoTxt(v){ return v ? new Date(v).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'}) : ''; }
+function tarjetaCancelacion(o){
+  const sol = o.estado==='cancelacion_solicitada';
+  const metodo = o.metodo ? (o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':'🎁 Cortesía') : '';
+  const quien = o.canceladoPor==='admin' ? 'Administrador' : o.canceladoPor==='user' ? 'Staff' : '';
+  return `<div class="card">
+    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${sol?'por cancelar':'cancelado'}</span></div>
+    <div class="small">Pedido: ${cuandoTxt(o.fecha)}${metodo?' · '+metodo:''}</div>
+    <div class="small">${sol?'Solicitada':'Cancelación'}: ${cuandoTxt(fechaCanc(o))}${quien?' · por '+quien:''}${!sol&&o.fechaResolucion?' · aprobada '+cuandoTxt(o.fechaResolucion):''}</div>
+    ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${esc(i.nombre)}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
-    <div class="card small" style="background:var(--bg2);margin-top:8px"><strong>Motivo:</strong> ${esc(o.motivoCancelacion||'(sin especificar)')}</div>
-    <div style="display:flex;gap:8px;margin-top:8px">
+    <div class="card small" style="background:var(--bg2);margin-top:8px"><strong>Motivo:</strong> ${esc(o.motivoCancelacion||'(sin especificar)')}${sol&&o.estadoAnterior?'<br><span class="small">Estado antes: '+esc(o.estadoAnterior.replace('_',' '))+'</span>':''}</div>
+    ${sol&&role==='admin'?`<div style="display:flex;gap:8px;margin-top:8px">
       <button class="danger" style="flex:1" onclick="resolverCancelacion('${o.id}',true)">✅ Aprobar cancelación</button>
       <button class="secondary" style="flex:1" onclick="resolverCancelacion('${o.id}',false)">Rechazar</button>
-    </div></div>`).join('');
+    </div>`:''}</div>`;
+}
+function renderCancelaciones(){
+  if(cancDesde>cancHasta){ const t=cancDesde; cancDesde=cancHasta; cancHasta=t; }
+  const enRango = orders.filter(o=>{
+    if(o.estado!=='cancelacion_solicitada' && o.estado!=='cancelado') return false;
+    const f=fechaLocal(fechaCanc(o)); return f>=cancDesde && f<=cancHasta; });
+  const porCancelar = enRango.filter(o=>o.estado==='cancelacion_solicitada');
+  const cancelados = enRango.filter(o=>o.estado==='cancelado');
+  const montoCanc = cancelados.reduce((s,o)=>s+o.total,0);
+  const montoPend = porCancelar.reduce((s,o)=>s+o.total,0);
+  const chip = (id,txt)=>`<button class="${cancRapido===id?'active':''}" onclick="cancPreset('${id}')">${txt}</button>`;
+  const chipV = (id,txt)=>`<button class="${cancVista===id?'active':''}" onclick="cancVista='${id}';render()">${txt}</button>`;
+  const filtros = `<div class="card">
+    <label>Día</label>
+    <div class="chips">${chip('hoy','Hoy')}${chip('ayer','Ayer')}${chip('7d','Últimos 7 días')}${chip('mes','Este mes')}</div>
+    <div class="row" style="margin-top:6px">
+      <div><label>Desde</label><input type="date" value="${cancDesde}" onchange="cancDesde=this.value;cancRapido='';render()"></div>
+      <div><label>Hasta</label><input type="date" value="${cancHasta}" onchange="cancHasta=this.value;cancRapido='';render()"></div>
+    </div>
+    <label style="margin-top:10px">Mostrar</label>
+    <div class="chips">${chipV('todos','Todos')}${chipV('pend','Por cancelar')}${chipV('canc','Cancelados')}</div>
+  </div>`;
+  const resumen = `<div class="stats-row"><div class="card stat"><div class="n">${porCancelar.length}</div><div class="l">Por cancelar · ${fmt(montoPend)}</div></div>
+    <div class="card stat"><div class="n">${cancelados.length}</div><div class="l">Cancelados · ${fmt(montoCanc)}</div></div></div>`;
+  const ordenar = l=>l.slice().sort((a,b)=>new Date(fechaCanc(b))-new Date(fechaCanc(a)));
+  let out = filtros + resumen;
+  if(cancVista!=='canc'){
+    out += `<h3 style="margin:14px 0 6px">Pendientes por cancelar (${porCancelar.length})</h3>` +
+      (porCancelar.length ? ordenar(porCancelar).map(tarjetaCancelacion).join('') : '<p class="empty">No hay solicitudes pendientes en este día.</p>');
+  }
+  if(cancVista!=='pend'){
+    out += `<h3 style="margin:14px 0 6px">Cancelados (${cancelados.length})</h3>` +
+      (cancelados.length ? ordenar(cancelados).map(tarjetaCancelacion).join('') : '<p class="empty">No hay pedidos cancelados en este día.</p>');
+  }
+  return out;
 }
 function renderHistorial(){
   if(histDesde>histHasta){ const t=histDesde; histDesde=histHasta; histHasta=t; }
@@ -489,15 +543,29 @@ function renderRegistrar(){
   ${buscador}
   <div class="card lista">${html}</div>`;
 }
+let busquedaInv='', catInv='';
 function renderInventario(){
-  return `<div class="card"><h3 style="margin-top:0">Agregar producto</h3>
+  const esAdmin = role==='admin';
+  const cats = [...new Set(products.map(p=>p.categoria||'Otros'))];
+  const q = busquedaInv.trim().toLowerCase();
+  const catActiva = cats.includes(catInv) ? catInv : cats[0];
+  const lista = q ? products.filter(p=>(p.nombre||'').toLowerCase().includes(q)||(p.categoria||'').toLowerCase().includes(q))
+                  : products.filter(p=>(p.categoria||'Otros')===catActiva);
+  const agregar = esAdmin ? `<div class="card"><h3 style="margin-top:0">Agregar producto</h3>
     <div class="row"><div><label>Nombre</label><input id="np-nombre"></div><div><label>Categoría</label><input id="np-cat" placeholder="Café"></div></div>
     <div class="row" style="margin-top:8px"><div><label>Precio</label><input id="np-precio" type="number"></div><div><label>Stock</label><input id="np-stock" type="number"></div></div>
-    <button class="primary" style="margin-top:10px" onclick="agregarProducto()">+ Agregar</button></div>
-  ${products.map(p=>`<div class="card"><div class="orderline"><strong>${p.nombre}</strong><span class="small">${p.categoria||''}</span></div>
-    <div class="row" style="margin-top:8px"><div><label>Precio</label><input id="p-precio-${p.id}" type="number" value="${p.precio}"></div>
+    <button class="primary" style="margin-top:10px" onclick="agregarProducto()">+ Agregar</button></div>` : '';
+  const aviso = esAdmin ? '' : '<p class="small" style="margin:0 0 8px">Como usuario puedes actualizar el <strong>stock</strong>. El precio y los productos nuevos los maneja el administrador.</p>';
+  const buscador = `<div class="card">${aviso}
+    <input id="invBuscar" type="search" placeholder="🔍 Buscar artículo para editar…" value="${esc(busquedaInv)}" oninput="busquedaInv=this.value;render()" autocomplete="off">
+    <div class="chips" id="chipsInv" style="margin-top:8px">${cats.map(c=>`<button class="${!q&&c===catActiva?'active':''}" onclick="catInv=this.dataset.c;busquedaInv='';render()" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+    <div class="small" style="margin-top:6px">${lista.length} artículo${lista.length===1?'':'s'}${q?' encontrados':' en '+esc(catActiva||'')}</div></div>`;
+  const tarjetas = lista.length ? lista.map(p=>`<div class="card"><div class="orderline"><strong>${esc(p.nombre)}</strong><span class="small">${esc(p.categoria||'')}</span></div>
+    <div class="row" style="margin-top:8px"><div><label>Precio</label><input id="p-precio-${p.id}" type="number" value="${p.precio}" ${esAdmin?'':'disabled'}></div>
     <div><label>Stock</label><input id="p-stock-${p.id}" type="number" value="${p.stock}"></div></div>
-    <button class="secondary" style="margin-top:8px" onclick="guardarProducto('${p.id}')">Guardar</button></div>`).join('')}`;
+    <button class="secondary" style="margin-top:8px" onclick="guardarProducto('${p.id}')">Guardar</button></div>`).join('')
+    : '<p class="empty">No se encontró ningún artículo.</p>';
+  return agregar + buscador + tarjetas;
 }
 function renderReporte(){
   const today=new Date().toDateString();
@@ -568,6 +636,9 @@ function render(){
     return;
   }
   const scrollY = window.scrollY;
+  const af = document.activeElement;
+  const focoId = af && af.id==='invBuscar' ? af.id : null;
+  const focoPos = focoId ? af.selectionStart : 0;
   const chipsEl = document.getElementById('chipsReg');
   const chipsScroll = chipsEl ? chipsEl.scrollLeft : 0;
   const cancTab = orders.filter(o=>o.estado==='cancelacion_solicitada').length;
@@ -578,7 +649,6 @@ function render(){
   const tabsAdmin = role==='admin' ? `
     <button class="${tab==='canc'?'active':''}" onclick="setTab('canc')">Cancelaciones${cancTab>0?' ('+cancTab+')':''}</button>
     <button class="${tab==='hist'?'active':''}" onclick="setTab('hist')">Historial</button>
-    <button class="${tab==='inv'?'active':''}" onclick="setTab('inv')">Inventario</button>
     <button class="${tab==='reporte'?'active':''}" onclick="setTab('reporte')">Reporte</button>` : '';
   document.getElementById('app').innerHTML = `<header style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
   <img src="${LOGO_DATAURI}" alt="Mestizo Café" style="height:32px;width:auto">
@@ -590,11 +660,13 @@ function render(){
     <button class="${tab==='hoy'?'active':''}" onclick="setTab('hoy')">Pedidos de hoy</button>
     <button class="${tab==='reg'?'active':''}" onclick="setTab('reg')">Registrar manual</button>
     <button class="${tab==='res'?'active':''}" onclick="setTab('res')">Resumen del día</button>
+    <button class="${tab==='inv'?'active':''}" onclick="setTab('inv')">Inventario</button>
     ${tabsAdmin}
   </div></header><main>${body}</main>`;
   window.scrollTo(0, scrollY);
   const newChips = document.getElementById('chipsReg');
   if(newChips) newChips.scrollLeft = chipsScroll;
+  if(focoId){ const f=document.getElementById(focoId); if(f){ f.focus(); try{ f.setSelectionRange(focoPos,focoPos); }catch(e){} } }
   renderedSig = dataSig();
   updateTitle();
   updateBanner();
