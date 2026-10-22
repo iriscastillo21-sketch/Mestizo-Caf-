@@ -159,7 +159,7 @@ function detectNew(list){
   if(nuevos.length && !silenciar){ beep(); toast(nuevos); }
 }
 function dataSig(){
-  return JSON.stringify(orders.map(o=>[o.id,o.estado,o.motivoCancelacion,o.fechaCancelacion]))+JSON.stringify(products.map(p=>[p.id,p.stock,p.precio]))+JSON.stringify(insumos.map(i=>[i.id,i.stock,i.minimo]));
+  return JSON.stringify(orders.map(o=>[o.id,o.estado,o.motivoCancelacion,o.fechaCancelacion]))+JSON.stringify(products.map(p=>[p.id,p.stock,p.precio]))+JSON.stringify(insumos.map(i=>[i.id,i.stock,i.minimo]))+JSON.stringify(caja.map(m=>[m.id,m.anulado]));
 }
 function escribiendo(){
   const a=document.activeElement;
@@ -181,6 +181,7 @@ async function poll(){
       const pr=await fetch(`${API_URL}?action=productos`).then(r=>r.json());
       if(Array.isArray(pr)) products=pr;
       await cargarInsumos(tab==='ins');
+      if(tab==='caja') await cargarCaja();
     }
     orders=pe.sort((a,b)=> new Date(b.fecha)-new Date(a.fecha));
     detectNew(orders);
@@ -211,6 +212,7 @@ async function init(){
   startPolling();
 }
 let insumos=[], movs=[], insumosError='';
+let caja=[], cajaError='';
 async function leerAuth(action,payload){
   const tk = role==='admin'?ADMIN_TOKEN:USER_TOKEN;
   return fetch(`${API_URL}?action=${action}&payload=${encodeURIComponent(JSON.stringify({...(payload||{}), token:tk}))}`).then(r=>r.json());
@@ -224,11 +226,20 @@ async function cargarInsumos(conMovs){
     if(conMovs && !insumosError){ const m = await leerAuth('movimientos'); if(Array.isArray(m)) movs=m; }
   }catch(e){ insumosError='No se pudieron cargar los insumos.'; }
 }
+async function cargarCaja(){
+  if(!role) return;
+  try{
+    const r = await leerAuth('caja');
+    if(Array.isArray(r)){ caja=r; cajaError=''; }
+    else cajaError = (r&&r.error==='accion desconocida') ? 'Falta actualizar Codigo.gs en Apps Script (Nueva versión) para usar Caja.' : 'No se pudo cargar la caja.';
+  }catch(e){ cajaError='No se pudo cargar la caja.'; }
+}
 async function loadAll(){
   const [pr, pe] = await Promise.all([
     fetch(`${API_URL}?action=productos`).then(r=>r.json()),
     fetch(`${API_URL}?action=pedidos`).then(r=>r.json()),
-    cargarInsumos(tab==='ins')
+    cargarInsumos(tab==='ins'),
+    tab==='caja' ? cargarCaja() : Promise.resolve()
   ]);
   products = pr; orders = pe.sort((a,b)=> new Date(b.fecha)-new Date(a.fecha));
   detectNew(orders);
@@ -267,7 +278,7 @@ function descAvisos(lista){
 function descAvisosCard(lista){ const a=descAvisos(lista); return a.length?`<div class="card small" style="background:var(--bg2)">${a.map(x=>`<div style="margin:3px 0">${x}</div>`).join('')}</div>`:''; }
 function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toFixed(2)); }
 function todayStr(d){ return new Date(d).toDateString(); }
-function setTab(t){ tab=t; render(); if(t==='ins') cargarInsumos(true).then(()=>{ if(tab==='ins' && !escribiendo()) render(); }); }
+function setTab(t){ tab=t; render(); if(t==='caja') cargarCaja().then(()=>{ if(tab==='caja' && !escribiendo()) render(); }); if(t==='ins') cargarInsumos(true).then(()=>{ if(tab==='ins' && !escribiendo()) render(); }); }
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function cartItems(){ return Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); }
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
@@ -559,6 +570,175 @@ function renderRegistrar(){
   ${buscador}
   <div class="card lista">${html}</div>`;
 }
+
+// ===================== CAJA (EFECTIVO) =====================
+const DENOMS=[{v:1000,t:'Billete $1,000'},{v:500,t:'Billete $500'},{v:200,t:'Billete $200'},{v:100,t:'Billete $100'},{v:50,t:'Billete $50'},{v:20,t:'Billete $20'},
+  {v:20,t:'Moneda $20',m:1},{v:10,t:'Moneda $10'},{v:5,t:'Moneda $5'},{v:2,t:'Moneda $2'},{v:1,t:'Moneda $1'},{v:0.5,t:'Moneda $0.50'}];
+const dKey=(d,i)=>i; // índice único (hay billete y moneda de $20)
+let cajaDia=fechaLocal(new Date()), cajaTipo='entrada', cajaModo='monto', cjConcepto='', cjMonto='';
+let cntMv={}, cntAr={};
+const CONCEPTOS={entrada:['Cambio','Propina','Otro ingreso'],salida:['Compra de insumos','Pago a proveedor','Retiro','Gasto menor'],fondo:['Fondo inicial']};
+function contTotal(c){ return DENOMS.reduce((t,d,i)=>t+Math.round(d.v*100)*(c[i]||0),0)/100; }
+function contDesglose(c){ const o={}; DENOMS.forEach((d,i)=>{ if(c[i]>0) o[String(d.v)]=(o[String(d.v)]||0)+c[i]; }); return o; }
+function esperadoCaja(dia){
+  const ms=caja.filter(m=>fechaLocal(m.fecha)===dia && !m.anulado);
+  const suma=t=>ms.filter(m=>m.tipo===t).reduce((a,m)=>a+m.monto,0);
+  const ventas=orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && o.metodo==='efectivo' && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+o.total,0);
+  const fondo=suma('fondo'), ent=suma('entrada'), sal=suma('salida');
+  const arqs=ms.filter(m=>m.tipo==='arqueo');
+  return { fondo, ent, sal, ventas, esperado:Math.round((fondo+ventas+ent-sal)*100)/100, arqueo:arqs.length?arqs[0]:null, ms };
+}
+function setCont(pref,i,v){
+  const c=pref==='mv'?cntMv:cntAr; c[i]=Math.max(0,Math.min(100000,Math.floor(Number(v)||0)));
+  const inp=document.getElementById(`c-${pref}-${i}`); if(inp && document.activeElement!==inp) inp.value=c[i]||'';
+  actualizarCaja();
+}
+function stepCont(pref,i,d){ const c=pref==='mv'?cntMv:cntAr; setCont(pref,i,(c[i]||0)+d); }
+function limpiarCont(pref){ if(pref==='mv') cntMv={}; else cntAr={}; render(); }
+function actualizarCaja(){
+  ['mv','ar'].forEach(pref=>{
+    const c=pref==='mv'?cntMv:cntAr;
+    DENOMS.forEach((d,i)=>{ const e=document.getElementById(`st-${pref}-${i}`); if(e) e.textContent=fmt(d.v*(c[i]||0)); });
+    const t=document.getElementById('tot-'+pref); if(t) t.textContent=fmt(contTotal(c));
+  });
+  const dif=document.getElementById('arq-dif');
+  if(dif){ const ex=esperadoCaja(fechaLocal(new Date())).esperado, d=Math.round((contTotal(cntAr)-ex)*100)/100;
+    dif.textContent = d===0 ? '✅ Cuadra exacto' : d>0 ? `🟢 Sobran ${fmt(d)}` : `🔴 Faltan ${fmt(-d)}`; }
+}
+function contadorHTML(pref){
+  const c=pref==='mv'?cntMv:cntAr;
+  return `<div>${DENOMS.map((d,i)=>`<div class="orderline" style="align-items:center;margin:4px 0;gap:6px">
+    <span style="flex:1;min-width:110px">${d.t}</span>
+    <button class="secondary" style="padding:4px 12px" onclick="stepCont('${pref}',${i},-1)">−</button>
+    <input id="c-${pref}-${i}" type="number" min="0" inputmode="numeric" style="width:64px;text-align:center" value="${c[i]||''}" oninput="setCont('${pref}',${i},this.value)">
+    <button class="secondary" style="padding:4px 12px" onclick="stepCont('${pref}',${i},1)">+</button>
+    <span id="st-${pref}-${i}" class="small" style="width:72px;text-align:right">${fmt(d.v*(c[i]||0))}</span></div>`).join('')}
+    <div class="orderline" style="font-weight:bold;font-size:1.1rem;margin-top:8px"><span>Total contado</span><span id="tot-${pref}">${fmt(contTotal(c))}</span></div>
+    <button class="secondary" style="margin-top:6px" onclick="limpiarCont('${pref}')">Limpiar conteo</button></div>`;
+}
+async function guardarCaja(){
+  const concepto=cjConcepto.trim();
+  if(cajaTipo!=='fondo' && !concepto){ alert('Escribe el concepto del movimiento.'); return; }
+  const payload={tipo:cajaTipo,concepto};
+  if(cajaModo==='conteo'){ if(contTotal(cntMv)<=0){ alert('Cuenta al menos un billete o moneda.'); return; } payload.desglose=contDesglose(cntMv); }
+  else { const m=Number(cjMonto); if(!(m>0)){ alert('Escribe un monto mayor a 0.'); return; } payload.monto=m; }
+  const r=await api('registrarCaja',payload);
+  if(r && r.ok){ cjConcepto=''; cjMonto=''; cntMv={}; }
+  await cargarCaja(); render();
+}
+async function guardarArqueo(){
+  const total=contTotal(cntAr);
+  if(total===0 && !confirm('El conteo está en $0. ¿Guardar el arqueo así?')) return;
+  const ex=esperadoCaja(fechaLocal(new Date())).esperado;
+  const r=await api('registrarCaja',{tipo:'arqueo',desglose:contDesglose(cntAr),monto:total,esperado:ex});
+  if(r && r.ok){ cntAr={}; }
+  await cargarCaja(); render();
+}
+async function anularMovCaja(id){
+  const motivo=prompt('Motivo de la anulación (obligatorio):');
+  if(!motivo || !motivo.trim()) return;
+  await api('anularCaja',{id,motivo:motivo.trim()});
+  await cargarCaja(); render();
+}
+// --- calculadora ---
+let calc={disp:'0',acc:null,op:null,fresh:true,hist:''};
+function calcNum(n){ return Math.round(n*1e10)/1e10; }
+function calcOp(a,op,b){ return op==='+'?a+b:op==='−'?a-b:op==='×'?a*b:op==='÷'?(b===0?NaN:a/b):b; }
+function calcKey(k){
+  if(calc.disp==='Error' && k!=='C') calc={disp:'0',acc:null,op:null,fresh:true,hist:''};
+  if(/^[0-9]$/.test(k)){ calc.disp = (calc.fresh||calc.disp==='0') ? k : (calc.disp.length<14?calc.disp+k:calc.disp); calc.fresh=false; }
+  else if(k==='.'){ if(calc.fresh){ calc.disp='0.'; calc.fresh=false; } else if(!calc.disp.includes('.')) calc.disp+='.'; }
+  else if(k==='C'){ calc={disp:'0',acc:null,op:null,fresh:true,hist:''}; }
+  else if(k==='⌫'){ if(!calc.fresh){ calc.disp = calc.disp.length>1 ? calc.disp.slice(0,-1) : '0'; if(calc.disp==='-') calc.disp='0'; } }
+  else if(['+','−','×','÷'].includes(k)){
+    const cur=Number(calc.disp);
+    if(calc.acc!==null && calc.op && !calc.fresh){ const r=calcOp(calc.acc,calc.op,cur); if(isNaN(r)){ calc={disp:'Error',acc:null,op:null,fresh:true,hist:''}; return calcDraw(); } calc.acc=calcNum(r); calc.disp=String(calc.acc); }
+    else calc.acc=cur;
+    calc.op=k; calc.fresh=true; calc.hist=`${calc.acc} ${k}`;
+  }
+  else if(k==='='){
+    if(calc.acc!==null && calc.op){ const cur=Number(calc.disp), r=calcOp(calc.acc,calc.op,cur);
+      calc.hist=`${calc.acc} ${calc.op} ${cur} =`;
+      if(isNaN(r)){ calc={disp:'Error',acc:null,op:null,fresh:true,hist:''}; return calcDraw(); }
+      calc.disp=String(calcNum(r)); calc.acc=null; calc.op=null; calc.fresh=true; }
+  }
+  calcDraw();
+}
+function calcDraw(){ const d=document.getElementById('calcDisp'), h=document.getElementById('calcHist'); if(d) d.textContent=calc.disp; if(h) h.textContent=calc.hist||' '; }
+// --- cálculo de cambio ---
+let chgTotal='', chgRec='';
+function cambioDesglose(cents){
+  const vals=[100000,50000,20000,10000,5000,2000,1000,500,200,100,50]; const out=[];
+  vals.forEach(v=>{ const n=Math.floor(cents/v); if(n>0){ out.push(`${n} × ${v>=2000?'billete':'moneda'} de ${fmt(v/100)}`); cents-=n*v; } });
+  return out;
+}
+function cambioDraw(){
+  const t=Number(chgTotal)||0, r=Number(chgRec)||0, el=document.getElementById('chgOut'); if(!el) return;
+  if(!chgTotal||!chgRec){ el.innerHTML='<span class="small">Escribe el total y lo que recibes.</span>'; return; }
+  const c=Math.round((r-t)*100);
+  if(c<0) el.innerHTML=`<strong style="color:#c0392b">Faltan ${fmt(-c/100)}</strong>`;
+  else if(c===0) el.innerHTML='<strong>✅ Pago exacto, sin cambio</strong>';
+  else el.innerHTML=`<div style="font-size:1.4rem;font-weight:bold">Cambio: ${fmt(c/100)}</div><div class="small">${cambioDesglose(c).join(' · ')}</div>`;
+}
+function chgSetRec(v){ chgRec=String(v); const i=document.getElementById('chgRec'); if(i) i.value=chgRec; cambioDraw(); }
+function chgExacto(){ if(chgTotal) chgSetRec(chgTotal); }
+
+function renderCaja(){
+  const esAdmin=role==='admin', hoyStr=fechaLocal(new Date()), esHoy=cajaDia===hoyStr;
+  if(cajaError) return `<div class="card"><p style="margin:0">⚠️ ${esc(cajaError)}</p></div>`+renderCalculadoras();
+  const R=esperadoCaja(cajaDia);
+  const tipoTxt={fondo:'🏦 Fondo inicial',entrada:'➕ Entrada',salida:'➖ Salida',arqueo:'🔢 Arqueo'};
+  const dia=`<div class="card"><label>Día</label><div class="row"><div><input type="date" value="${cajaDia}" onchange="cajaDia=this.value||fechaLocal(new Date());render()"></div>
+    <div><button class="secondary" style="width:100%" onclick="cajaDia=fechaLocal(new Date());render()">Hoy</button></div></div></div>`;
+  const resumen=`<div class="card stat"><div class="n" style="font-size:2rem">${fmt(R.esperado)}</div><div class="l">💵 Efectivo que debe haber en caja</div></div>
+    <div class="card small"><div class="orderline"><span>🏦 Fondo inicial</span><strong>${fmt(R.fondo)}</strong></div>
+    <div class="orderline"><span>🧾 Ventas en efectivo</span><strong>${fmt(R.ventas)}</strong></div>
+    <div class="orderline"><span>➕ Entradas</span><strong>${fmt(R.ent)}</strong></div>
+    <div class="orderline"><span>➖ Salidas</span><strong>−${fmt(R.sal)}</strong></div>
+    ${R.arqueo?`<div class="orderline" style="margin-top:6px;border-top:1px solid var(--bg2);padding-top:6px"><span>🔢 Último arqueo</span><strong>${fmt(R.arqueo.monto)}${R.arqueo.esperado!==null?(()=>{const d=Math.round((R.arqueo.monto-R.arqueo.esperado)*100)/100;return d===0?' · cuadra':d>0?' · sobran '+fmt(d):' · faltan '+fmt(-d);})():''}</strong></div>`:''}</div>`;
+  const chips=t=>`<button class="${cajaTipo===t?'active':''}" onclick="cajaTipo='${t}';render()">${tipoTxt[t]}</button>`;
+  const registro = !esHoy ? '' : `<div class="card"><h3 style="margin:0 0 8px;font-size:1rem">Registrar movimiento de efectivo</h3>
+    <div class="chips">${chips('entrada')}${chips('salida')}${chips('fondo')}</div>
+    <label style="margin-top:8px">Concepto${cajaTipo==='fondo'?' (opcional)':''}</label>
+    <input id="cj-concepto" value="${esc(cjConcepto)}" placeholder="Para qué fue" oninput="cjConcepto=this.value">
+    <div class="chips" style="margin-top:6px">${(CONCEPTOS[cajaTipo]||[]).map(c=>`<button data-c="${esc(c)}" onclick="cjConcepto=this.dataset.c;render()">${esc(c)}</button>`).join('')}</div>
+    <label style="margin-top:8px">¿Cómo capturas el monto?</label>
+    <div class="chips"><button class="${cajaModo==='monto'?'active':''}" onclick="cajaModo='monto';render()">Escribir monto</button><button class="${cajaModo==='conteo'?'active':''}" onclick="cajaModo='conteo';render()">Contar billetes y monedas</button></div>
+    ${cajaModo==='monto' ? `<label style="margin-top:8px">Monto ($)</label><input id="cj-monto" type="number" step="any" inputmode="decimal" value="${esc(cjMonto)}" oninput="cjMonto=this.value">` : `<div style="margin-top:8px">${contadorHTML('mv')}</div>`}
+    <button class="primary" style="margin-top:10px;width:100%" onclick="guardarCaja()">Guardar ${cajaTipo==='entrada'?'entrada':cajaTipo==='salida'?'salida':'fondo inicial'}</button></div>`;
+  const arqueo = !esHoy ? '' : `<details class="card"><summary style="cursor:pointer;font-weight:bold">🔢 Arqueo: contar el efectivo de la caja</summary>
+    <p class="small" style="margin:8px 0">Cuenta lo que hay en la caja y compáralo con lo que debería haber (${fmt(R.esperado)}).</p>
+    ${contadorHTML('ar')}
+    <div id="arq-dif" style="font-size:1.15rem;font-weight:bold;margin-top:8px"></div>
+    <button class="primary" style="margin-top:8px;width:100%" onclick="guardarArqueo()">Guardar arqueo</button></details>`;
+  const lista = R.ms.length || caja.some(m=>fechaLocal(m.fecha)===cajaDia) ? caja.filter(m=>fechaLocal(m.fecha)===cajaDia).map(m=>{
+    const des=Object.keys(m.desglose||{}).sort((a,b)=>b-a).map(k=>`${m.desglose[k]}×$${k}`).join(', ');
+    return `<div class="card small"${m.anulado?' style="opacity:.55"':''}>
+      <div class="orderline"><strong>${tipoTxt[m.tipo]||m.tipo}${m.anulado?' · ANULADO':''}</strong><strong>${m.tipo==='salida'?'−':''}${fmt(m.monto)}</strong></div>
+      <div>${esc(m.concepto)} · ${new Date(m.fecha).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})} · ${m.por==='admin'?'Admin':'Staff'}</div>
+      ${des?`<div>Billetes y monedas: ${des}</div>`:''}
+      ${m.tipo==='arqueo'&&m.esperado!==null?`<div>Esperado: ${fmt(m.esperado)}</div>`:''}
+      ${m.anulado?`<div>Motivo: ${esc(m.motivoAnulacion)}</div>`:''}
+      ${esAdmin&&!m.anulado?`<button class="secondary" style="margin-top:6px" onclick="anularMovCaja('${m.id}')">Anular movimiento</button>`:''}</div>`; }).join('')
+    : '<p class="empty">No hay movimientos de efectivo en este día.</p>';
+  return dia+resumen+registro+arqueo+renderCalculadoras()+`<h3 style="margin:14px 0 6px">Movimientos del día</h3>`+lista;
+}
+function renderCalculadoras(){
+  const teclas=['7','8','9','÷','4','5','6','×','1','2','3','−','0','.','⌫','+'];
+  return `<details class="card"><summary style="cursor:pointer;font-weight:bold">🧮 Calculadora</summary>
+    <div style="max-width:300px;margin:8px auto 0"><div style="background:var(--bg2);border-radius:8px;padding:8px 12px;text-align:right">
+      <div id="calcHist" class="small">${esc(calc.hist)||'&nbsp;'}</div><div id="calcDisp" style="font-size:1.8rem;font-weight:bold;word-break:break-all">${esc(calc.disp)}</div></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">
+      ${teclas.map(k=>`<button class="${/[0-9.]/.test(k)?'secondary':'primary'}" style="padding:14px 0;font-size:1.15rem" onclick="calcKey('${k}')">${k}</button>`).join('')}
+      <button class="danger" style="padding:14px 0;font-size:1.15rem" onclick="calcKey('C')">C</button>
+      <button class="primary" style="padding:14px 0;font-size:1.15rem;grid-column:span 3" onclick="calcKey('=')">=</button></div></div></details>
+  <details class="card"><summary style="cursor:pointer;font-weight:bold">💱 Calculadora de cambio</summary>
+    <div class="row" style="margin-top:8px"><div><label>Total a cobrar ($)</label><input id="chgTotal" type="number" step="any" inputmode="decimal" value="${esc(chgTotal)}" oninput="chgTotal=this.value;cambioDraw()"></div>
+    <div><label>Recibido ($)</label><input id="chgRec" type="number" step="any" inputmode="decimal" value="${esc(chgRec)}" oninput="chgRec=this.value;cambioDraw()"></div></div>
+    <div class="chips" style="margin-top:6px"><button onclick="chgExacto()">Exacto</button>${[20,50,100,200,500,1000].map(v=>`<button onclick="chgSetRec(${v})">$${v}</button>`).join('')}</div>
+    <div id="chgOut" style="margin-top:8px"></div></details>`;
+}
+
 let busquedaIns='', catIns='', insHist=null;
 function fmtNum(n){ return String(Math.round(Number(n)*1000)/1000); }
 async function movimientoInsumo(id,tipo){
@@ -733,7 +913,7 @@ function render(){
   const bajosN = insumos.filter(i=>i.minimo>0 && i.stock<=i.minimo).length;
   const body = tab==='pend'?renderPendientes():tab==='hoy'?renderHoy():tab==='reg'?renderRegistrar():
                tab==='res'?renderResumen():tab==='canc'?renderCancelaciones():tab==='hist'?renderHistorial():
-               tab==='inv'?renderInventario():tab==='ins'?renderInsumos():renderReporte();
+               tab==='inv'?renderInventario():tab==='ins'?renderInsumos():tab==='caja'?renderCaja():renderReporte();
   const tabsAdmin = role==='admin' ? `
     <button class="${tab==='canc'?'active':''}" onclick="setTab('canc')">Cancelaciones${cancTab>0?' ('+cancTab+')':''}</button>
     <button class="${tab==='hist'?'active':''}" onclick="setTab('hist')">Historial</button>
@@ -750,12 +930,14 @@ function render(){
     <button class="${tab==='res'?'active':''}" onclick="setTab('res')">Resumen del día</button>
     <button class="${tab==='inv'?'active':''}" onclick="setTab('inv')">Inventario</button>
     <button class="${tab==='ins'?'active':''}" onclick="setTab('ins')">Insumos${bajosN>0?' ⚠️'+bajosN:''}</button>
+    <button class="${tab==='caja'?'active':''}" onclick="setTab('caja')">Caja</button>
     ${tabsAdmin}
   </div></header><main>${body}</main>`;
   window.scrollTo(0, scrollY);
   const newChips = document.getElementById('chipsReg');
   if(newChips) newChips.scrollLeft = chipsScroll;
   if(focoId){ const f=document.getElementById(focoId); if(f){ f.focus(); try{ f.setSelectionRange(focoPos,focoPos); }catch(e){} } }
+  if(tab==='caja'){ actualizarCaja(); cambioDraw(); }
   renderedSig = dataSig();
   updateTitle();
   updateBanner();
