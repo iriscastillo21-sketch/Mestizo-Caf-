@@ -577,6 +577,7 @@ function renderRegistrar(){
 // ===================== CAJA (EFECTIVO) =====================
 const DENOMS=[{v:1000,t:'$1,000'},{v:500,t:'$500'},{v:200,t:'$200'},{v:100,t:'$100'},{v:50,t:'$50'},{v:20,t:'$20'},
   {v:20,t:'$20'},{v:10,t:'$10'},{v:5,t:'$5'},{v:2,t:'$2'},{v:1,t:'$1'},{v:0.5,t:'$0.50'}];   // 0-5 billetes, 6-11 monedas
+const FONDO_CAJA=2000;   // fondo fijo de caja: siempre hay $2,000 (cámbialo aquí si algún día cambia)
 let cajaDia=fechaLocal(new Date()), cajaModo='monto', cjConcepto='', cjMonto='', cajaModal=null;
 let cntMv={}, cntAr={};
 const CONCEPTOS_CAJA=['Cambio','Propina','Compra de insumos','Pago a proveedor','Retiro','Gasto menor'];
@@ -587,7 +588,7 @@ function esperadoCaja(dia){
   const ms=caja.filter(m=>fechaLocal(m.fecha)===dia && !m.anulado);
   const suma=t=>ms.filter(m=>m.tipo===t).reduce((a,m)=>a+m.monto,0);
   const ventas=orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && o.metodo==='efectivo' && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+o.total,0);
-  const fondo=suma('fondo'), ent=suma('entrada'), sal=suma('salida');
+  const fondo=FONDO_CAJA, ent=suma('entrada'), sal=suma('salida');   // los movimientos 'fondo' viejos ya no cuentan
   const arqs=ms.filter(m=>m.tipo==='arqueo');
   return { fondo, ent, sal, ventas, esperado:Math.round((fondo+ventas+ent-sal)*100)/100, arqueo:arqs.length?arqs[0]:null };
 }
@@ -680,7 +681,7 @@ function renderCaja(){
   const cab=`<div class="card" style="padding:10px;margin-bottom:8px">
     <div class="orderline" style="align-items:center;gap:8px"><div><div class="small">💵 Debe haber en caja</div><div style="font-size:1.9rem;font-weight:bold;line-height:1.1">${fmt(R.esperado)}</div></div>
       <input type="date" value="${cajaDia}" style="width:140px" onchange="cajaDia=this.value||fechaLocal(new Date());render()"></div>
-    <div style="display:flex;gap:5px;margin-top:8px">${mini('Fondo',fmt(R.fondo))}${mini('+ Ventas',fmt(R.ventas),'#1e8449')}${mini('+ Entradas',fmt(R.ent),'#1e8449')}${mini('− Salidas',fmt(R.sal),'#c0392b')}</div>${arq}</div>`;
+    <div style="display:flex;gap:5px;margin-top:8px">${mini('🏦 Fondo fijo',fmt(R.fondo))}${mini('+ Ventas',fmt(R.ventas),'#1e8449')}${mini('+ Entradas',fmt(R.ent),'#1e8449')}${mini('− Salidas',fmt(R.sal),'#c0392b')}</div><div class="small" style="margin-top:6px">💰 Por retirar al cierre (sobre el fondo): <strong>${fmt(Math.round((R.esperado-R.fondo)*100)/100)}</strong></div>${arq}</div>`;
   const registro = !esHoy ? `<p class="small" style="margin:0 0 6px">Estás viendo otro día. <a href="#" onclick="cajaDia=fechaLocal(new Date());render();return false">Volver a hoy</a></p>` : `<div class="card" style="padding:10px;margin-bottom:8px">
     <div style="display:flex;gap:6px"><input id="cj-concepto" style="flex:2;min-width:0" value="${esc(cjConcepto)}" placeholder="Concepto (para qué)" oninput="cjConcepto=this.value">
       <input id="cj-monto" class="nospin" style="flex:1;min-width:0" type="number" step="any" inputmode="decimal" placeholder="$ Monto" value="${esc(cjMonto)}" oninput="cjMonto=this.value;cajaModo='monto'"></div>
@@ -688,7 +689,7 @@ function renderCaja(){
     <div class="chips" style="margin:6px 0;flex-wrap:nowrap;overflow-x:auto">${CONCEPTOS_CAJA.map(c=>`<button data-c="${esc(c)}" style="white-space:nowrap" onclick="cjConcepto=this.dataset.c;render()">${esc(c)}</button>`).join('')}</div>
     <div style="display:flex;gap:6px"><button class="danger" style="flex:1" onclick="guardarCaja('salida')">➖ Salida</button>
       <button class="primary" style="flex:1" onclick="guardarCaja('entrada')">➕ Entrada</button>
-      <button class="secondary" style="flex:1" onclick="guardarCaja('fondo')">🏦 Fondo</button></div>
+</div>
     <div style="display:flex;gap:6px;margin-top:6px"><button class="secondary" style="flex:1" onclick="abrirModal('mv')">🪙 Contar billetes</button>
       <button class="secondary" style="flex:1" onclick="abrirModal('ar')">🔢 Arqueo</button></div></div>`;
   const del=caja.filter(m=>fechaLocal(m.fecha)===cajaDia);
