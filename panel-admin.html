@@ -671,18 +671,44 @@ function modalCaja(){
       <button class="primary" style="flex:2" onclick="${esAr?'guardarArqueo()':'usarConteo()'}">${esAr?'Guardar arqueo':'Usar este total'}</button></div>
     </div></div>`;
 }
+const ICONO_CAJA={fondo:'🏦',entrada:'➕',salida:'➖',arqueo:'🔢'};
+function movimientosCajaHTML(dia){
+  const esAdmin=role==='admin', icono=ICONO_CAJA;
+  const del=caja.filter(m=>fechaLocal(m.fecha)===dia);
+  return del.length ? del.map(m=>{
+    const signo=m.tipo==='salida'?'−':m.tipo==='entrada'||m.tipo==='fondo'?'+':'';
+    const col=m.tipo==='salida'?'#c0392b':m.tipo==='arqueo'?'inherit':'#1e8449';
+    const des=desgloseTxt(m.desglose);
+    return `<div class="small" style="padding:5px 0;border-bottom:1px solid var(--bg2)${m.anulado?';opacity:.5;text-decoration:line-through':''}">
+      <div class="orderline"><span>${icono[m.tipo]||''} ${esc(m.concepto)} · ${new Date(m.fecha).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})} · ${m.por==='admin'?'Admin':'Staff'}</span>
+      <strong style="color:${col}">${signo}${fmt(m.monto)}</strong></div>
+      ${des?`<div>${des}</div>`:''}${m.anulado?`<div style="text-decoration:none">ANULADO: ${esc(m.motivoAnulacion)}</div>`:''}
+      ${esAdmin&&!m.anulado?`<a href="#" onclick="anularMovCaja('${m.id}');return false">Anular</a>`:''}</div>`; }).join('')
+    : '<p class="empty small" style="margin:6px 0">Sin movimientos en este día.</p>';
+}
+// Caja y reporte en una sola pestaña: staff ve la caja de hoy; el administrador además cambia de periodo
+function renderCajaYReporte(){
+  if(role!=='admin') return renderCaja();
+  if(repRapido==='hoy'){
+    const c=(id,t)=>`<button class="${repRapido===id?'active':''}" onclick="repPreset('${id}')">${t}</button>`;
+    return `<div class="chips" style="margin-bottom:8px;flex-wrap:nowrap;overflow-x:auto">${c('hoy','Hoy')}${c('ayer','Ayer')}${c('7d','Últimos 7 días')}${c('mes','Este mes')}<button style="white-space:nowrap" onclick="repRapido='';render()">📅 Rango</button></div>`+renderCaja();
+  }
+  return renderReporte();
+}
 function renderCaja(){
-  const esAdmin=role==='admin', hoyStr=fechaLocal(new Date()), esHoy=cajaDia===hoyStr;
+  cajaDia=fechaLocal(new Date());   // la caja siempre trabaja con el día de hoy; otros días se consultan en el reporte
+  const esAdmin=role==='admin', hoyStr=fechaLocal(new Date()), esHoy=true;
   if(cajaError) return `<div class="card"><p style="margin:0">⚠️ ${esc(cajaError)}</p></div>`;
-  const R=esperadoCaja(cajaDia);
+  const R=esperadoCaja(cajaDia), C=cierreDia(cajaDia), sinM=Math.round((C.total-C.ef-C.tj)*100)/100;
   const icono={fondo:'🏦',entrada:'➕',salida:'➖',arqueo:'🔢'};
   const mini=(t,v,col)=>`<div style="flex:1;text-align:center;background:var(--bg2);border-radius:8px;padding:5px 2px"><div style="font-size:.68rem">${t}</div><div style="font-weight:bold;font-size:.9rem${col?';color:'+col:''}">${v}</div></div>`;
   const arq = R.arqueo ? (()=>{ const d=R.arqueo.esperado!==null?Math.round((R.arqueo.monto-R.arqueo.esperado)*100)/100:null;
     return `<div class="small" style="margin:6px 0 0">🔢 Último arqueo: <strong>${fmt(R.arqueo.monto)}</strong>${d===null?'':d===0?' · cuadra':d>0?' · sobran '+fmt(d):' · faltan '+fmt(-d)}</div>`; })() : '';
   const cab=`<div class="card" style="padding:10px;margin-bottom:8px">
     <div class="orderline" style="align-items:center;gap:8px"><div><div class="small">💵 Debe haber en caja</div><div style="font-size:1.9rem;font-weight:bold;line-height:1.1">${fmt(R.esperado)}</div></div>
-      <input type="date" value="${cajaDia}" style="width:140px" onchange="cajaDia=this.value||fechaLocal(new Date());render()"></div>
-    <div style="display:flex;gap:5px;margin-top:8px">${mini('🏦 Fondo fijo',fmt(R.fondo))}${mini('+ Ventas',fmt(R.ventas),'#1e8449')}${mini('+ Entradas',fmt(R.ent),'#1e8449')}${mini('− Salidas',fmt(R.sal),'#c0392b')}</div><div class="small" style="margin-top:6px">💰 Por retirar al cierre (sobre el fondo): <strong>${fmt(Math.round((R.esperado-R.fondo)*100)/100)}</strong></div>${arq}</div>`;
+      </div>
+    <div style="display:flex;gap:5px;margin-top:8px">${mini('🏦 Fondo fijo',fmt(R.fondo))}${mini('+ Ventas 💵',fmt(R.ventas),'#1e8449')}${mini('+ Entradas',fmt(R.ent),'#1e8449')}${mini('− Salidas',fmt(R.sal),'#c0392b')}</div><div class="small" style="margin-top:6px">💰 Por retirar al cierre (sobre el fondo): <strong>${fmt(Math.round((R.esperado-R.fondo)*100)/100)}</strong></div>
+    <div class="small" style="margin-top:4px">🧾 Ventas del día <strong>${fmt(C.total)}</strong> = 💵 ${fmt(C.ef)} + 💳 ${fmt(C.tj)}${sinM>0?` + <span style="color:#c0392b">⚠️ ${fmt(sinM)} sin método</span>`:''} · solo el efectivo entra a la caja</div>${arq}</div>`;
   const registro = !esHoy ? `<p class="small" style="margin:0 0 6px">Estás viendo otro día. <a href="#" onclick="cajaDia=fechaLocal(new Date());render();return false">Volver a hoy</a></p>` : `<div class="card" style="padding:10px;margin-bottom:8px">
     <div style="display:flex;gap:6px"><input id="cj-concepto" style="flex:2;min-width:0" value="${esc(cjConcepto)}" placeholder="Concepto (para qué)" oninput="cjConcepto=this.value">
       <input id="cj-monto" class="nospin" style="flex:1;min-width:0" type="number" step="any" inputmode="decimal" placeholder="$ Monto" value="${esc(cjMonto)}" oninput="cjMonto=this.value;cajaModo='monto'"></div>
@@ -693,19 +719,8 @@ function renderCaja(){
 </div>
     <div style="display:flex;gap:6px;margin-top:6px"><button class="secondary" style="flex:1" onclick="abrirModal('mv')">🪙 Contar billetes</button>
       <button class="secondary" style="flex:1" onclick="abrirModal('ar')">🔢 Arqueo</button></div></div>`;
-  const del=caja.filter(m=>fechaLocal(m.fecha)===cajaDia);
-  const lista = del.length ? del.map(m=>{
-    const signo=m.tipo==='salida'?'−':m.tipo==='entrada'||m.tipo==='fondo'?'+':'';
-    const col=m.tipo==='salida'?'#c0392b':m.tipo==='arqueo'?'inherit':'#1e8449';
-    const des=desgloseTxt(m.desglose);
-    return `<div class="small" style="padding:5px 0;border-bottom:1px solid var(--bg2)${m.anulado?';opacity:.5;text-decoration:line-through':''}">
-      <div class="orderline"><span>${icono[m.tipo]||''} ${esc(m.concepto)} · ${new Date(m.fecha).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})} · ${m.por==='admin'?'Admin':'Staff'}</span>
-      <strong style="color:${col}">${signo}${fmt(m.monto)}</strong></div>
-      ${des?`<div>${des}</div>`:''}${m.anulado?`<div style="text-decoration:none">ANULADO: ${esc(m.motivoAnulacion)}</div>`:''}
-      ${esAdmin&&!m.anulado?`<a href="#" onclick="anularMovCaja('${m.id}');return false">Anular</a>`:''}</div>`; }).join('')
-    : '<p class="empty small" style="margin:6px 0">Sin movimientos en este día.</p>';
   return cab+registro+`<div class="card" style="padding:8px 10px;margin:0"><strong class="small">Movimientos del día</strong>
-    <div id="cajaLista" style="max-height:26vh;overflow-y:auto;margin-top:2px">${lista}</div></div>`+modalCaja();
+    <div id="cajaLista" style="max-height:26vh;overflow-y:auto;margin-top:2px">${movimientosCajaHTML(cajaDia)}</div></div>`+modalCaja();
 }
 let busquedaIns='', catIns='', insHist=null;
 function fmtNum(n){ return String(Math.round(Number(n)*1000)/1000); }
@@ -865,7 +880,8 @@ function renderReporte(){
     <tr style="text-align:right;border-top:2px solid var(--bg2);font-weight:bold"><td style="text-align:left;padding:4px 3px">Total</td><td>${fmt(total)}</td><td>${fmt(ef)}</td><td>${fmt(tj)}</td><td>${fmt(ent)}</td><td>${fmt(sal)}</td><td>${fmt(retirar)}</td><td>${difs.length?(difTot===0?'✅':difTot>0?'+'+fmt(difTot):'−'+fmt(-difTot)):'—'}</td></tr></table></div></div>`
     :'<p class="empty">Sin ventas ni movimientos de caja en este periodo.</p>';
   const topCard=`<div class="card"><p class="small" style="margin:0 0 4px">Productos más vendidos</p>${top.length?top.map(([n,u])=>`<div class="orderline small"><span>${esc(n)}</span><strong>${u} uds</strong></div>`).join(''):'<p style="margin:0">—</p>'}</div>`;
-  return filtros+ventas+cajaCard+descAvisosCard(todos)+tabla+topCard;
+  const movs=unDia?`<div class="card" style="padding:8px 10px"><strong class="small">Movimientos de caja del día</strong><div style="max-height:40vh;overflow-y:auto">${movimientosCajaHTML(repDesde)}</div></div>`:'';
+  return filtros+ventas+cajaCard+movs+descAvisosCard(todos)+tabla+topCard;
 }
 
 function renderResumen(){
@@ -916,6 +932,7 @@ function renderLogin(){
 }
 
 function render(){
+  if(tab==='reporte') tab='caja';
   document.getElementById('app').removeAttribute('style');
   if(!role){
     document.getElementById('app').innerHTML = renderLogin();
@@ -933,11 +950,11 @@ function render(){
   const bajosN = insumos.filter(i=>i.minimo>0 && i.stock<=i.minimo).length;
   const body = tab==='pend'?renderPendientes():tab==='hoy'?renderHoy():tab==='reg'?renderRegistrar():
                tab==='res'?renderResumen():tab==='canc'?renderCancelaciones():tab==='hist'?renderHistorial():
-               tab==='inv'?renderInventario():tab==='ins'?renderInsumos():tab==='caja'?renderCaja():renderReporte();
+               tab==='inv'?renderInventario():tab==='ins'?renderInsumos():tab==='caja'?renderCajaYReporte():renderCajaYReporte();
   const tabsAdmin = role==='admin' ? `
     <button class="${tab==='canc'?'active':''}" onclick="setTab('canc')">Cancelaciones${cancTab>0?' ('+cancTab+')':''}</button>
     <button class="${tab==='hist'?'active':''}" onclick="setTab('hist')">Historial</button>
-    <button class="${tab==='reporte'?'active':''}" onclick="setTab('reporte')">Reporte</button>` : '';
+    ` : '';
   document.getElementById('app').innerHTML = `<header style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
   <img src="${LOGO_DATAURI}" alt="Mestizo Café" style="height:32px;width:auto">
   <h1 style="margin:0;flex:1 1 150px;font-size:1.05rem">Panel · Mestizo Café</h1>
@@ -950,7 +967,7 @@ function render(){
     <button class="${tab==='res'?'active':''}" onclick="setTab('res')">Resumen del día</button>
     <button class="${tab==='inv'?'active':''}" onclick="setTab('inv')">Inventario</button>
     <button class="${tab==='ins'?'active':''}" onclick="setTab('ins')">Insumos${bajosN>0?' ⚠️'+bajosN:''}</button>
-    <button class="${tab==='caja'?'active':''}" onclick="setTab('caja')">Caja</button>
+    <button class="${tab==='caja'?'active':''}" onclick="setTab('caja')">${role==='admin'?'Caja y reporte':'Caja'}</button>
     ${tabsAdmin}
   </div></header><main>${body}</main>`;
   window.scrollTo(0, scrollY);
