@@ -184,7 +184,7 @@ async function poll(){
       const pr=await fetch(`${API_URL}?action=productos`).then(r=>r.json());
       if(Array.isArray(pr)) products=pr;
       await cargarInsumos(tab==='ins');
-      if(tab==='caja') await cargarCaja();
+      if(usaCaja(tab)) await cargarCaja();
     }
     orders=pe.sort((a,b)=> new Date(b.fecha)-new Date(a.fecha));
     detectNew(orders);
@@ -229,6 +229,7 @@ async function cargarInsumos(conMovs){
     if(conMovs && !insumosError){ const m = await leerAuth('movimientos'); if(Array.isArray(m)) movs=m; }
   }catch(e){ insumosError='No se pudieron cargar los insumos.'; }
 }
+const usaCaja=t=>t==='caja'||t==='reporte'||t==='res';
 async function cargarCaja(){
   if(!role) return;
   try{
@@ -242,7 +243,7 @@ async function loadAll(){
     fetch(`${API_URL}?action=productos`).then(r=>r.json()),
     fetch(`${API_URL}?action=pedidos`).then(r=>r.json()),
     cargarInsumos(tab==='ins'),
-    tab==='caja' ? cargarCaja() : Promise.resolve()
+    usaCaja(tab) ? cargarCaja() : Promise.resolve()
   ]);
   products = pr; orders = pe.sort((a,b)=> new Date(b.fecha)-new Date(a.fecha));
   detectNew(orders);
@@ -281,7 +282,7 @@ function descAvisos(lista){
 function descAvisosCard(lista){ const a=descAvisos(lista); return a.length?`<div class="card small" style="background:var(--bg2)">${a.map(x=>`<div style="margin:3px 0">${x}</div>`).join('')}</div>`:''; }
 function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toFixed(2)); }
 function todayStr(d){ return new Date(d).toDateString(); }
-function setTab(t){ tab=t; render(); if(t==='caja') cargarCaja().then(()=>{ if(tab==='caja' && !escribiendo()) render(); }); if(t==='ins') cargarInsumos(true).then(()=>{ if(tab==='ins' && !escribiendo()) render(); }); }
+function setTab(t){ tab=t; render(); if(usaCaja(t)) cargarCaja().then(()=>{ if(tab===t && !escribiendo()) render(); }); if(t==='ins') cargarInsumos(true).then(()=>{ if(tab==='ins' && !escribiendo()) render(); }); }
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function cartItems(){ return Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); }
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
@@ -801,22 +802,70 @@ function renderInventario(){
     : '<p class="empty">No se encontró ningún artículo.</p>';
   return agregar + buscador + tarjetas;
 }
+let repDesde=fechaLocal(new Date()), repHasta=fechaLocal(new Date()), repRapido='hoy';
+function repPreset(tipo){
+  const hoy=new Date(), d=new Date(); repRapido=tipo;
+  if(tipo==='hoy'){ repDesde=repHasta=fechaLocal(hoy); }
+  else if(tipo==='ayer'){ d.setDate(d.getDate()-1); repDesde=repHasta=fechaLocal(d); }
+  else if(tipo==='7d'){ d.setDate(d.getDate()-6); repDesde=fechaLocal(d); repHasta=fechaLocal(hoy); }
+  else if(tipo==='mes'){ repDesde=fechaLocal(new Date(hoy.getFullYear(),hoy.getMonth(),1)); repHasta=fechaLocal(hoy); }
+  render();
+}
+const VENDIDOS=['aprobado','listo','entregado'];
+// Cierre de un día: ventas + caja (efectivo de ventas, entradas, salidas, arqueo)
+function cierreDia(dia){
+  const v=orders.filter(o=>VENDIDOS.includes(o.estado) && fechaLocal(o.fecha)===dia);
+  const R=esperadoCaja(dia);
+  const total=v.reduce((t,o)=>t+o.total,0);
+  const tj=v.filter(o=>o.metodo==='tarjeta').reduce((t,o)=>t+o.total,0);
+  const retirar=Math.round((R.ventas+R.ent-R.sal)*100)/100;   // efectivo que queda sobre el fondo fijo
+  const dif=(R.arqueo && R.arqueo.esperado!==null) ? Math.round((R.arqueo.monto-R.arqueo.esperado)*100)/100 : null;
+  const hayMov=caja.some(m=>fechaLocal(m.fecha)===dia);
+  return { dia, pedidos:v, n:v.length, total, ef:R.ventas, tj, ent:R.ent, sal:R.sal, retirar, esperado:R.esperado, dif, hayMov };
+}
+function diasEntre(d1,d2){
+  const [y1,m1,dd1]=d1.split('-').map(Number), [y2,m2,dd2]=d2.split('-').map(Number);
+  const out=[]; for(let d=new Date(y1,m1-1,dd1), fin=new Date(y2,m2-1,dd2); d<=fin && out.length<92; d.setDate(d.getDate()+1)) out.push(fechaLocal(d));
+  return out;
+}
 function renderReporte(){
-  const today=new Date().toDateString();
-  const hoy=orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && todayStr(o.fecha)===today);
-  const total=hoy.reduce((s,o)=>s+o.total,0);
-  const efectivo=hoy.filter(o=>o.metodo==='efectivo').reduce((s,o)=>s+o.total,0);
-  const tarjeta=hoy.filter(o=>o.metodo==='tarjeta').reduce((s,o)=>s+o.total,0);
-  const otro=Math.round((total-efectivo-tarjeta)*100)/100;
-  const cnt={}; hoy.forEach(o=>o.items.forEach(i=>{cnt[i.nombre]=(cnt[i.nombre]||0)+i.cantidad;}));
-  const top=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0];
-  return `<div class="stats-row"><div class="card stat"><div class="n">${fmt(total)}</div><div class="l">Venta total hoy</div></div>
-  <div class="card stat"><div class="n">${hoy.length}</div><div class="l">Pedidos hoy</div></div></div>
-  <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
-  <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>
-  ${otro>0?`<div class="card small" style="text-align:center">Sin método registrado: ${fmt(otro)}</div>`:''}
-  ${descAvisosCard(hoy)}
-  <div class="card"><p class="small" style="margin:0 0 4px">Producto más vendido hoy</p><p style="margin:0;font-weight:bold">${top?top[0]+' ('+top[1]+' uds)':'—'}</p></div>`;
+  if(repDesde>repHasta){ const t=repDesde; repDesde=repHasta; repHasta=t; }
+  const dias=diasEntre(repDesde,repHasta).map(cierreDia);
+  const todos=dias.flatMap(d=>d.pedidos);
+  const sum=k=>Math.round(dias.reduce((t,d)=>t+d[k],0)*100)/100;
+  const total=sum('total'), ef=sum('ef'), tj=sum('tj'), ent=sum('ent'), sal=sum('sal'), retirar=sum('retirar');
+  const otro=Math.round((total-ef-tj)*100)/100;
+  const difs=dias.filter(d=>d.dif!==null), difTot=Math.round(difs.reduce((t,d)=>t+d.dif,0)*100)/100;
+  const cnt={}; todos.forEach(o=>o.items.forEach(i=>{cnt[i.nombre]=(cnt[i.nombre]||0)+i.cantidad;}));
+  const top=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const unDia=repDesde===repHasta, hoyStr=fechaLocal(new Date());
+  const chip=(id,t)=>`<button class="${repRapido===id?'active':''}" onclick="repPreset('${id}')">${t}</button>`;
+  const filtros=`<div class="card"><label>Periodo</label><div class="chips">${chip('hoy','Hoy')}${chip('ayer','Ayer')}${chip('7d','Últimos 7 días')}${chip('mes','Este mes')}</div>
+    <div class="row" style="margin-top:6px"><div><label>Desde</label><input type="date" value="${repDesde}" onchange="repDesde=this.value||repDesde;repRapido='';render()"></div>
+    <div><label>Hasta</label><input type="date" value="${repHasta}" onchange="repHasta=this.value||repHasta;repRapido='';render()"></div></div></div>`;
+  if(cajaError) return filtros+`<div class="card"><p style="margin:0">⚠️ ${esc(cajaError)}</p></div>`;
+  const ventas=`<div class="stats-row"><div class="card stat"><div class="n">${fmt(total)}</div><div class="l">Venta total</div></div>
+    <div class="card stat"><div class="n">${todos.length}</div><div class="l">Pedidos</div></div></div>
+    <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(ef)}</div><div class="l">Ventas en efectivo</div></div>
+    <div class="card stat"><div class="n">💳 ${fmt(tj)}</div><div class="l">Ventas con tarjeta</div></div></div>
+    ${otro>0?`<div class="card small" style="text-align:center">Sin método registrado: ${fmt(otro)}</div>`:''}`;
+  const unDiaCaja = unDia ? (()=>{ const d=dias[0]; return `<div class="card stat"><div class="n" style="font-size:1.8rem">${fmt(d.esperado)}</div><div class="l">💵 Debe haber en caja al cierre (incluye fondo fijo ${fmt(FONDO_CAJA)})</div></div>`; })() : '';
+  const cajaCard=`${unDiaCaja}<div class="card small"><strong>💰 Flujo de efectivo del periodo</strong>
+    <div class="orderline"><span>Ventas en efectivo</span><span>${fmt(ef)}</span></div>
+    <div class="orderline"><span>➕ Entradas de caja</span><span style="color:#1e8449">+${fmt(ent)}</span></div>
+    <div class="orderline"><span>➖ Salidas de caja</span><span style="color:#c0392b">−${fmt(sal)}</span></div>
+    <div class="orderline" style="font-weight:bold;border-top:1px solid var(--bg2);padding-top:4px;margin-top:4px"><span>Efectivo neto (sobre el fondo)</span><span>${fmt(retirar)}</span></div>
+    <div class="orderline"><span>🔢 Diferencia en arqueos${difs.length?` (${difs.length})`:''}</span><span>${difs.length?(difTot===0?'cuadra':difTot>0?'sobran '+fmt(difTot):'faltan '+fmt(-difTot)):'sin arqueos'}</span></div></div>`;
+  const filas=dias.filter(d=>d.n>0||d.hayMov);
+  const tabla=filas.length?`<div class="card" style="padding:8px 6px"><strong class="small" style="padding:0 4px">Cierre por día</strong>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.74rem;margin-top:4px;white-space:nowrap">
+    <tr style="text-align:right;opacity:.8"><th style="text-align:left;padding:3px">Día</th><th>Ventas</th><th>💵</th><th>💳</th><th>➕</th><th>➖</th><th>Neto</th><th>Arqueo</th></tr>
+    ${filas.map(d=>`<tr style="text-align:right;border-top:1px solid var(--bg2)"><td style="text-align:left;padding:4px 3px">${d.dia.slice(8)}/${d.dia.slice(5,7)}</td><td>${fmt(d.total)}</td><td>${fmt(d.ef)}</td><td>${fmt(d.tj)}</td><td>${fmt(d.ent)}</td><td>${fmt(d.sal)}</td><td><strong>${fmt(d.retirar)}</strong></td>
+      <td>${d.dif===null?'—':d.dif===0?'✅':d.dif>0?'+'+fmt(d.dif):'−'+fmt(-d.dif)}</td></tr>`).join('')}
+    <tr style="text-align:right;border-top:2px solid var(--bg2);font-weight:bold"><td style="text-align:left;padding:4px 3px">Total</td><td>${fmt(total)}</td><td>${fmt(ef)}</td><td>${fmt(tj)}</td><td>${fmt(ent)}</td><td>${fmt(sal)}</td><td>${fmt(retirar)}</td><td>${difs.length?(difTot===0?'✅':difTot>0?'+'+fmt(difTot):'−'+fmt(-difTot)):'—'}</td></tr></table></div></div>`
+    :'<p class="empty">Sin ventas ni movimientos de caja en este periodo.</p>';
+  const topCard=`<div class="card"><p class="small" style="margin:0 0 4px">Productos más vendidos</p>${top.length?top.map(([n,u])=>`<div class="orderline small"><span>${esc(n)}</span><strong>${u} uds</strong></div>`).join(''):'<p style="margin:0">—</p>'}</div>`;
+  return filtros+ventas+cajaCard+descAvisosCard(todos)+tabla+topCard;
 }
 
 function renderResumen(){
@@ -847,6 +896,10 @@ function renderResumen(){
   <div class="card stat"><div class="n" style="font-size:2rem">${fmt(total)}</div><div class="l">Total cobrado hoy · ${cobrados.length} venta(s)</div></div>
   <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
   <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>
+  ${cajaError?'':(()=>{ const R=esperadoCaja(fechaLocal(new Date())); return `<div class="card small"><div class="orderline"><strong>💵 Caja de hoy</strong><a href="#" onclick="setTab('caja');return false">Abrir caja →</a></div>
+    <div class="orderline"><span>🏦 Fondo fijo + ventas en efectivo</span><span>${fmt(R.fondo)} + ${fmt(R.ventas)}</span></div>
+    <div class="orderline"><span>➕ Entradas / ➖ Salidas</span><span><span style="color:#1e8449">+${fmt(R.ent)}</span> / <span style="color:#c0392b">−${fmt(R.sal)}</span></span></div>
+    <div class="orderline" style="font-weight:bold;font-size:1rem"><span>Debe haber en caja</span><span>${fmt(R.esperado)}</span></div></div>`; })()}
   ${avisos.length?`<div class="card small" style="background:var(--bg2)">${avisos.map(a=>`<div style="margin:3px 0">${a}</div>`).join('')}</div>`:''}
   <div class="card"><h3 style="margin:0 0 8px;font-size:1rem">Detalle de cobros</h3>${detalle}</div>`;
 }
