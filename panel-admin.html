@@ -547,7 +547,7 @@ function renderRegistrar(){
     html+=bloqueCategoria(filtrados.filter(p=>p.categoria===cat));
   });
   if(filtrados.length===0) html='<p class="small" style="text-align:center;padding:16px">Sin resultados para tu búsqueda.</p>';
-  const buscador = `<input id="buscadorAdmin" placeholder="🔍 Buscar producto..." value="${busquedaReg}" oninput="busquedaReg=this.value;render()">
+  const buscador = `<input id="buscadorAdmin" placeholder="🔍 Buscar producto..." autocomplete="off" value="${esc(busquedaReg)}" oninput="busquedaReg=this.value;render()">
   <div class="chips" id="chipsReg">
     ${todasCats.map(c=>`<button class="${!buscando&&catActiva===c?'active':''}" onclick="busquedaReg='';catSelReg='${c.replace(/'/g,"\\'")}';render()">${c}</button>`).join('')}
   </div>`;
@@ -941,7 +941,7 @@ function render(){
   }
   const scrollY = window.scrollY;
   const af = document.activeElement;
-  const focoId = af && (af.id==='invBuscar'||af.id==='insBuscar') ? af.id : null;
+  const focoId = af && (af.id==='invBuscar'||af.id==='insBuscar'||af.id==='buscadorAdmin') ? af.id : null;
   const focoPos = focoId ? af.selectionStart : 0;
   const chipsEl = document.getElementById('chipsReg');
   const chipsScroll = chipsEl ? chipsEl.scrollLeft : 0;
