@@ -100,7 +100,7 @@ const ADMIN_VISTA=false;
 // ---- EXTRAS: el producto "Extra" despliega botones con todos los tipos disponibles ----
 const EXTRAS=[
   {g:'☕ Café y leche', o:['Shot de café','Leche de soya']},
-  {g:'🫧 Perlas y tapioca', o:['Perlas explosivas','Tapioca','Tapioca berry','Tapioca manzana verde']},
+  {g:'🫧 Perlas y tapioca', o:['Perlas explosivas','Tapioca berry','Tapioca manzana verde']},
   {g:'🍯 Jarabes (sabor)', pre:'Jarabe de ', o:['Vainilla','Caramelo','Avellana','Fresa','Mango','Menta','Mora azul','Manzana verde','Limón','Maracuyá','Durazno','Chocolate','Crema irlandesa','Carajillo','Rompope','Cajeta']}
 ];
 let extras={}, extraAbierto=false, extraSub='';
@@ -116,7 +116,7 @@ function panelExtras(){
 }
 function celdaExtra(p){
   const n=extrasCount();
-  return `<div class="cel"><div class="precio">${fmt(p.precio)}</div><button class="extbtn" onclick="toggleExtra()">${extraAbierto?'Cerrar ▴':(n>0?'Extras: '+n+' ▾':'Elegir ▾')}</button></div>`;
+  return `<div class="cel"><div class="precio">${fmt(p.precio)} c/u</div>${n>0?`<div class="nota">${n} elegido(s)</div>`:''}</div>`;
 }
 function parseTam(nombre){ const m=nombre.match(/^(.*) \((Mediano|Grande)\)$/); return m?{base:m[1],tam:m[2]}:{base:nombre,tam:null}; }
 function agrupar(lista){
@@ -144,7 +144,7 @@ function bloqueCategoria(lista){
     const solo = g.unico && !g.Mediano && !g.Grande;
     if(solo){
       h+=`<div class="fila ${conTam?'':'uno'}"><div class="nom">${esc(g.base)}</div>${conTam?`<div class="span2">${celdaProd(g.unico)}</div>`:celdaProd(g.unico)}</div>`;
-      if(esExtra(g.unico) && extraAbierto) h+=panelExtras();
+      if(esExtra(g.unico)) h+=panelExtras();
     } else {
       h+=`<div class="fila"><div class="nom">${esc(g.base)}</div>${celdaProd(g.Mediano)}${celdaProd(g.Grande)}</div>`;
     }
