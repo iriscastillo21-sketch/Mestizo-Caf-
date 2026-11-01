@@ -305,29 +305,22 @@ async function registrarPedidoManual(metodo){
 function setDescuento(v){ descuentoPct=v; if(v===0) motivoDesc=''; render(); }
 function addNota(t){ comentariosReg = comentariosReg.trim() ? comentariosReg.trim().replace(/[,.;]$/,'')+', '+t : t; render(); }
 
-// ---- EXTRAS: el producto "Extra" despliega botones con los tipos disponibles ----
+// ---- EXTRAS: el producto "Extra" despliega botones con todos los tipos disponibles ----
 const EXTRAS=[
-  {n:'Shot de café',e:'☕'},
-  {n:'Leche de soya',e:'🥛'},
-  {n:'Perlas explosivas',e:'🫧'},
-  {n:'Tapioca',e:'⚫'},
-  {n:'Jarabe',e:'🍯',sub:['Vainilla','Caramelo','Avellana','Fresa','Mango','Menta','Mora azul','Manzana verde','Limón','Maracuyá','Durazno','Chocolate','Crema irlandesa','Carajillo','Rompope','Cajeta']}
+  {g:'☕ Café y leche', o:['Shot de café','Leche de soya']},
+  {g:'🫧 Perlas y tapioca', o:['Perlas explosivas','Tapioca','Tapioca berry','Tapioca manzana verde']},
+  {g:'🍯 Jarabes (sabor)', pre:'Jarabe de ', o:['Vainilla','Caramelo','Avellana','Fresa','Mango','Menta','Mora azul','Manzana verde','Limón','Maracuyá','Durazno','Chocolate','Crema irlandesa','Carajillo','Rompope','Cajeta']}
 ];
 let extras={}, extraAbierto=false, extraSub='';
 function esExtra(p){ return !!p && /^extra/i.test(p.nombre); }
-function extraCuenta(x){ return x.sub ? Object.entries(extras).filter(([k])=>k.startsWith(x.n+' de ')).reduce((a,[,q])=>a+q,0) : (extras[x.n]||0); }
 function extrasCount(){ return Object.values(extras).reduce((a,b)=>a+b,0); }
-function toggleExtra(){ extraAbierto=!extraAbierto; if(!extraAbierto) extraSub=''; render(); }
-function pickExtra(n){ const x=EXTRAS.find(e=>e.n===n); if(!x) return; if(x.sub){ extraSub=(extraSub===n?'':n); render(); } else addExtra(x.n,1); }
-function pickSabor(s){ addExtra('Jarabe de '+s,1); }
+function toggleExtra(){ extraAbierto=!extraAbierto; render(); }
 function panelExtras(){
+  const btn=(k,txt)=>`<button class="${extras[k]?'active':''}" data-v="${esc(k)}" onclick="addExtra(this.dataset.v,1)">${txt}${extras[k]?' · '+extras[k]:''}</button>`;
+  const grupos=EXTRAS.map(g=>`<div class="small" style="margin:8px 0 4px">${g.g}</div><div class="chips" style="flex-wrap:wrap;overflow:visible">${g.o.map(o=>btn((g.pre||'')+o,esc(o))).join('')}</div>`).join('');
   const sel=Object.entries(extras);
-  const ch=(cls,fn,val,txt)=>`<button class="${cls}" data-v="${esc(val)}" onclick="${fn}(this.dataset.v)">${txt}</button>`;
-  const tipos=EXTRAS.map(x=>{ const c=extraCuenta(x); return ch((extraSub===x.n||(!x.sub&&c>0))?'active':'','pickExtra',x.n,`${x.e} ${esc(x.n)}${x.sub?' ▾':''}${c>0?' · '+c:''}`); }).join('');
-  const jx=EXTRAS.find(e=>e.n===extraSub);
-  const sabores=jx?`<div class="small" style="margin:8px 0 4px">Elige el sabor del jarabe:</div><div class="chips" style="flex-wrap:wrap;overflow:visible">${jx.sub.map(s=>ch(extras['Jarabe de '+s]?'active':'','pickSabor',s,esc(s)+(extras['Jarabe de '+s]?' · '+extras['Jarabe de '+s]:''))).join('')}</div>`:'';
-  const lista=sel.length?`<div style="margin-top:8px">${sel.map(([k,q])=>`<div class="orderline small"><span>${esc(k)}</span><span class="qty"><button data-o="${esc(k)}" onclick="addExtra(this.dataset.o,-1)">–</button> <span>${q}</span> <button data-o="${esc(k)}" onclick="addExtra(this.dataset.o,1)">+</button></span></div>`).join('')}</div>`:'';
-  return `<div class="extpanel"><div class="small" style="margin-bottom:6px">Toca el extra que quieras agregar (cada uno cuesta lo mismo que el Extra).</div><div class="chips" style="flex-wrap:wrap;overflow:visible">${tipos}</div>${sabores}${lista}</div>`;
+  const lista=sel.length?`<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px"><div class="small">Extras elegidos:</div>${sel.map(([k,q])=>`<div class="orderline small"><span>${esc(k)}</span><span class="qty"><button data-o="${esc(k)}" onclick="addExtra(this.dataset.o,-1)">–</button> <span>${q}</span> <button data-o="${esc(k)}" onclick="addExtra(this.dataset.o,1)">+</button></span></div>`).join('')}</div>`:'';
+  return `<div class="extpanel"><div class="small">Toca cada extra que quieras agregar (cada uno cuesta lo mismo que el Extra).</div>${grupos}${lista}</div>`;
 }
 function celdaExtra(p){
   const n=extrasCount();
@@ -878,6 +871,17 @@ function diasEntre(d1,d2){
   const out=[]; for(let d=new Date(y1,m1-1,dd1), fin=new Date(y2,m2-1,dd2); d<=fin && out.length<92; d.setDate(d.getDate()+1)) out.push(fechaLocal(d));
   return out;
 }
+// ---- Ventas por grupo: Alimentos, Bebidas y Pan ----
+function grupoDe(i){ const pr=products.find(x=>x.id===i.id); const c=String(pr?pr.categoria:'').trim().toLowerCase(); return c==='alimentos'?'Alimentos':c==='pan'?'Pan':'Bebidas'; }
+function tarjetaGrupos(peds){
+  const g={Alimentos:{u:0,m:0},Bebidas:{u:0,m:0},Pan:{u:0,m:0}}; let sub=0, tot=0;
+  peds.forEach(o=>{ tot+=o.total; o.items.forEach(i=>{ const k=grupoDe(i), m=i.precio*i.cantidad; g[k].u+=i.cantidad; g[k].m+=m; sub+=m; }); });
+  const desc=Math.round((tot-sub)*100)/100, ic={Alimentos:'🍽️',Bebidas:'🥤',Pan:'🥐'};
+  return `<div class="card small"><strong>Ventas por grupo</strong>
+    ${Object.keys(g).map(k=>`<div class="orderline"><span>${ic[k]} ${k} <span style="opacity:.7">· ${g[k].u} uds</span></span><span>${fmt(g[k].m)}</span></div>`).join('')}
+    ${desc!==0?`<div class="orderline"><span>🏷️ Descuentos y cortesías</span><span>${desc<0?'−':''}${fmt(Math.abs(desc))}</span></div>`:''}
+    <div class="orderline" style="font-weight:bold;border-top:1px solid var(--bg2);padding-top:4px;margin-top:4px"><span>Total</span><span>${fmt(tot)}</span></div></div>`;
+}
 function renderReporte(){
   if(repDesde>repHasta){ const t=repDesde; repDesde=repHasta; repHasta=t; }
   const dias=diasEntre(repDesde,repHasta).map(cierreDia);
@@ -916,7 +920,7 @@ function renderReporte(){
     :'<p class="empty">Sin ventas ni movimientos de caja en este periodo.</p>';
   const topCard=`<div class="card"><p class="small" style="margin:0 0 4px">Productos más vendidos</p>${top.length?top.map(([n,u])=>`<div class="orderline small"><span>${esc(n)}</span><strong>${u} uds</strong></div>`).join(''):'<p style="margin:0">—</p>'}</div>`;
   const movs=unDia?`<div class="card" style="padding:8px 10px"><strong class="small">Movimientos de caja del día</strong><div style="max-height:40vh;overflow-y:auto">${movimientosCajaHTML(repDesde)}</div></div>`:'';
-  return filtros+ventas+cajaCard+movs+descAvisosCard(todos)+tabla+topCard;
+  return filtros+ventas+tarjetaGrupos(todos)+cajaCard+movs+descAvisosCard(todos)+tabla+topCard;
 }
 
 function renderResumen(){
@@ -947,6 +951,7 @@ function renderResumen(){
   <div class="card stat"><div class="n" style="font-size:2rem">${fmt(total)}</div><div class="l">Total cobrado hoy · ${cobrados.length} venta(s)</div></div>
   <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
   <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>
+  ${tarjetaGrupos(cobrados)}
   ${cajaError?'':(()=>{ const R=esperadoCaja(fechaLocal(new Date())); return `<div class="card small"><div class="orderline"><strong>💵 Caja de hoy</strong><a href="#" onclick="setTab('caja');return false">Abrir caja →</a></div>
     <div class="orderline"><span>🏦 Fondo fijo + ventas en efectivo</span><span>${fmt(R.fondo)} + ${fmt(R.ventas)}</span></div>
     <div class="orderline"><span>➕ Entradas / ➖ Salidas</span><span><span style="color:#1e8449">+${fmt(R.ent)}</span> / <span style="color:#c0392b">−${fmt(R.sal)}</span></span></div>
