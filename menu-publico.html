@@ -97,29 +97,22 @@ async function enviarPedido(metodo){
 }
 const ADMIN_VISTA=false;
 
-// ---- EXTRAS: el producto "Extra" despliega botones con los tipos disponibles ----
+// ---- EXTRAS: el producto "Extra" despliega botones con todos los tipos disponibles ----
 const EXTRAS=[
-  {n:'Shot de café',e:'☕'},
-  {n:'Leche de soya',e:'🥛'},
-  {n:'Perlas explosivas',e:'🫧'},
-  {n:'Tapioca',e:'⚫'},
-  {n:'Jarabe',e:'🍯',sub:['Vainilla','Caramelo','Avellana','Fresa','Mango','Menta','Mora azul','Manzana verde','Limón','Maracuyá','Durazno','Chocolate','Crema irlandesa','Carajillo','Rompope','Cajeta']}
+  {g:'☕ Café y leche', o:['Shot de café','Leche de soya']},
+  {g:'🫧 Perlas y tapioca', o:['Perlas explosivas','Tapioca','Tapioca berry','Tapioca manzana verde']},
+  {g:'🍯 Jarabes (sabor)', pre:'Jarabe de ', o:['Vainilla','Caramelo','Avellana','Fresa','Mango','Menta','Mora azul','Manzana verde','Limón','Maracuyá','Durazno','Chocolate','Crema irlandesa','Carajillo','Rompope','Cajeta']}
 ];
 let extras={}, extraAbierto=false, extraSub='';
 function esExtra(p){ return !!p && /^extra/i.test(p.nombre); }
-function extraCuenta(x){ return x.sub ? Object.entries(extras).filter(([k])=>k.startsWith(x.n+' de ')).reduce((a,[,q])=>a+q,0) : (extras[x.n]||0); }
 function extrasCount(){ return Object.values(extras).reduce((a,b)=>a+b,0); }
-function toggleExtra(){ extraAbierto=!extraAbierto; if(!extraAbierto) extraSub=''; render(); }
-function pickExtra(n){ const x=EXTRAS.find(e=>e.n===n); if(!x) return; if(x.sub){ extraSub=(extraSub===n?'':n); render(); } else addExtra(x.n,1); }
-function pickSabor(s){ addExtra('Jarabe de '+s,1); }
+function toggleExtra(){ extraAbierto=!extraAbierto; render(); }
 function panelExtras(){
+  const btn=(k,txt)=>`<button class="${extras[k]?'active':''}" data-v="${esc(k)}" onclick="addExtra(this.dataset.v,1)">${txt}${extras[k]?' · '+extras[k]:''}</button>`;
+  const grupos=EXTRAS.map(g=>`<div class="small" style="margin:8px 0 4px">${g.g}</div><div class="chips" style="flex-wrap:wrap;overflow:visible">${g.o.map(o=>btn((g.pre||'')+o,esc(o))).join('')}</div>`).join('');
   const sel=Object.entries(extras);
-  const ch=(cls,fn,val,txt)=>`<button class="${cls}" data-v="${esc(val)}" onclick="${fn}(this.dataset.v)">${txt}</button>`;
-  const tipos=EXTRAS.map(x=>{ const c=extraCuenta(x); return ch((extraSub===x.n||(!x.sub&&c>0))?'active':'','pickExtra',x.n,`${x.e} ${esc(x.n)}${x.sub?' ▾':''}${c>0?' · '+c:''}`); }).join('');
-  const jx=EXTRAS.find(e=>e.n===extraSub);
-  const sabores=jx?`<div class="small" style="margin:8px 0 4px">Elige el sabor del jarabe:</div><div class="chips" style="flex-wrap:wrap;overflow:visible">${jx.sub.map(s=>ch(extras['Jarabe de '+s]?'active':'','pickSabor',s,esc(s)+(extras['Jarabe de '+s]?' · '+extras['Jarabe de '+s]:''))).join('')}</div>`:'';
-  const lista=sel.length?`<div style="margin-top:8px">${sel.map(([k,q])=>`<div class="orderline small"><span>${esc(k)}</span><span class="qty"><button data-o="${esc(k)}" onclick="addExtra(this.dataset.o,-1)">–</button> <span>${q}</span> <button data-o="${esc(k)}" onclick="addExtra(this.dataset.o,1)">+</button></span></div>`).join('')}</div>`:'';
-  return `<div class="extpanel"><div class="small" style="margin-bottom:6px">Toca el extra que quieras agregar (cada uno cuesta lo mismo que el Extra).</div><div class="chips" style="flex-wrap:wrap;overflow:visible">${tipos}</div>${sabores}${lista}</div>`;
+  const lista=sel.length?`<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px"><div class="small">Extras elegidos:</div>${sel.map(([k,q])=>`<div class="orderline small"><span>${esc(k)}</span><span class="qty"><button data-o="${esc(k)}" onclick="addExtra(this.dataset.o,-1)">–</button> <span>${q}</span> <button data-o="${esc(k)}" onclick="addExtra(this.dataset.o,1)">+</button></span></div>`).join('')}</div>`:'';
+  return `<div class="extpanel"><div class="small">Toca cada extra que quieras agregar (cada uno cuesta lo mismo que el Extra).</div>${grupos}${lista}</div>`;
 }
 function celdaExtra(p){
   const n=extrasCount();
