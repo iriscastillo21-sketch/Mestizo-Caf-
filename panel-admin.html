@@ -271,7 +271,27 @@ function descuentoLinea(o){
   const quien=o.descuentoPor==='admin'?'Administrador':o.descuentoPor==='user'?'Usuario':'';
   return `<div class="card small" style="background:var(--bg2);margin-top:8px">${o.descuento===100?'🎁 <strong>Cortesía</strong>':'🏷️ <strong>Descuento '+o.descuento+'%</strong>'} (valor de lista ${fmt(o.subtotal)})${o.motivoDescuento?' · Motivo: '+esc(o.motivoDescuento):''}${quien?' · Autorizó: '+quien:''}</div>`;
 }
-function comentarioHTML(o){ return (o.comentarios ? `<div class="card small" style="background:var(--bg2);margin-top:8px">📝 <strong>Comentarios:</strong> ${esc(o.comentarios)}</div>` : '') + descuentoLinea(o); }
+let editNotaId=null, editNotaTxt='', guardandoNota=false;
+function editarNota(id){ const o=orders.find(x=>x.id===id); if(!o) return; editNotaId=id; editNotaTxt=o.comentarios||''; render(); }
+function cancelarNota(){ editNotaId=null; render(); }
+function notaChip(t){ editNotaTxt = editNotaTxt.trim() ? editNotaTxt.trim().replace(/[,.;]$/,'')+', '+t : t; render(); }
+async function guardarNota(id){
+  if(guardandoNota) return; guardandoNota=true;
+  try{ const res=await api('editarNota',{id, comentarios:editNotaTxt.trim()}); if(res&&res.ok){ editNotaId=null; await loadAll(); } else alert('No se pudo guardar'+(res&&res.error?': '+res.error:'')); }
+  finally{ guardandoNota=false; render(); }
+}
+function comentarioHTML(o){
+  const puede=['pendiente_pago','aprobado','listo'].includes(o.estado);
+  if(editNotaId===o.id){
+    const chips=['Leche entera','Leche deslactosada','Leche de soya','Sin azúcar','Alergia a '].map(t=>`<button data-t="${esc(t)}" onclick="notaChip(this.dataset.t)">+ ${esc(t)}</button>`).join('');
+    return `<div class="card small" style="background:var(--bg2);margin-top:8px"><label>📝 Comentarios del pedido</label>
+      <textarea rows="2" maxlength="200" oninput="editNotaTxt=this.value">${esc(editNotaTxt)}</textarea>
+      <div class="chips" style="padding:6px 0">${chips}</div>
+      <div style="display:flex;gap:8px"><button class="primary" style="flex:1" onclick="guardarNota('${o.id}')">Guardar</button><button class="secondary" style="flex:1" onclick="cancelarNota()">Cancelar</button></div></div>`+descuentoLinea(o);
+  }
+  const btn=puede?` <a href="#" onclick="editarNota('${o.id}');return false">✏️ ${o.comentarios?'Editar':'Agregar nota (leche, etc.)'}</a>`:'';
+  return (o.comentarios ? `<div class="card small" style="background:var(--bg2);margin-top:8px">📝 <strong>Comentarios:</strong> ${esc(o.comentarios)}${btn}</div>` : (btn?`<div class="small" style="margin-top:8px">${btn}</div>`:'')) + descuentoLinea(o);
+}
 function descAvisos(lista){
   const valor=a=>a.reduce((t,o)=>t+(o.subtotal-o.total),0);
   const cort=lista.filter(o=>o.descuento===100);
