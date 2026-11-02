@@ -89,6 +89,7 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
 let products=[], orders=[], cart={}, clientLabel='', tab='pend';
+let propinaReg=0;
 let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', comentariosReg='', registrando=false, claveReg=null;
 function nuevaClave(){ return 'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,10); }
 let role = localStorage.getItem('mestizo_role') || null;
@@ -244,7 +245,7 @@ async function loadAll(){
   const [pr, pe] = await Promise.all([
     fetch(`${API_URL}?action=productos`).then(r=>r.json()),
     fetch(`${API_URL}?action=pedidos`).then(r=>r.json()),
-    cargarInsumos(tab==='ins'),
+    cargarInsumos(tab==='ins'||tab==='inv'),
     usaCaja(tab) ? cargarCaja() : Promise.resolve()
   ]);
   products = pr; orders = pe.sort((a,b)=> new Date(b.fecha)-new Date(a.fecha));
@@ -304,7 +305,7 @@ function descAvisos(lista){
 function descAvisosCard(lista){ const a=descAvisos(lista); return a.length?`<div class="card small" style="background:var(--bg2)">${a.map(x=>`<div style="margin:3px 0">${x}</div>`).join('')}</div>`:''; }
 function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toFixed(2)); }
 function todayStr(d){ return new Date(d).toDateString(); }
-function setTab(t){ tab=t; render(); if(usaCaja(t)) cargarCaja().then(()=>{ if(tab===t && !escribiendo()) render(); }); if(t==='ins') cargarInsumos(true).then(()=>{ if(tab==='ins' && !escribiendo()) render(); }); }
+function setTab(t){ tab=t; render(); if(usaCaja(t)) cargarCaja().then(()=>{ if(tab===t && !escribiendo()) render(); }); if(t==='ins'||t==='inv') cargarInsumos(true).then(()=>{ if(tab===t && !escribiendo()) render(); }); }
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function addExtra(label,delta){ const p=products.find(esExtra); if(!p) return; claveReg=null; const next=Math.max(0,Math.min(20,(extras[label]||0)+delta)); if(next) extras[label]=next; else delete extras[label]; render(); }
 function quitarExtra(label){ delete extras[label]; claveReg=null; render(); }
@@ -317,11 +318,15 @@ async function registrarPedidoManual(metodo){
   registrando=true;
   if(!claveReg) claveReg=nuevaClave();
   try{
-    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc});
-    if(res && res.ok){ cart={}; extras={}; extraAbierto=false; extraSub=''; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
+    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, propina:(descuentoPct===100?0:propinaReg)});
+    if(res && res.ok){ cart={}; extras={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
     await loadAll();
   } finally { registrando=false; }
 }
+function setPropina(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null; render(); }
+function propinaInput(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null;
+  const a=document.getElementById('propTxt'), b=document.getElementById('cobrarTxt');
+  if(a) a.textContent=fmt(propinaReg); if(b) b.textContent=fmt(Math.round((cartTotal()*(100-descuentoPct)/100+propinaReg)*100)/100); }
 function setDescuento(v){ descuentoPct=v; if(v===0) motivoDesc=''; render(); }
 function addNota(t){ comentariosReg = comentariosReg.trim() ? comentariosReg.trim().replace(/[,.;]$/,'')+', '+t : t; render(); }
 
@@ -349,13 +354,13 @@ function celdaExtra(p){
 function quitarItem(id){ delete cart[id]; claveReg=null; render(); }
 function vaciarPedido(){
   if(!confirm('¿Vaciar el pedido actual?')) return;
-  cart={}; extras={}; extraAbierto=false; extraSub=''; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
+  cart={}; extras={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
 }
 const aprobando=new Set();
 async function aprobar(id){
   if(aprobando.has(id)) return;
   aprobando.add(id);
-  try{ await post('aprobarPedido', {id}); } finally { aprobando.delete(id); }
+  try{ const pi=document.getElementById('prop-'+id); await post('aprobarPedido', {id, propina: pi?Number(pi.value)||0:0}); } finally { aprobando.delete(id); }
 }
 async function marcar(id, estado){ await post('actualizarEstado', {id, estado}); }
 
@@ -382,6 +387,20 @@ async function agregarProducto(){
   const categoria=document.getElementById('np-cat').value.trim()||'Otros';
   if(!nombre) return;
   await post('agregarProducto', {nombre,precio,stock,categoria});
+}
+let mermaAbierta=null, registrandoMerma=false;
+function toggleMerma(id){ mermaAbierta = mermaAbierta===id ? null : id; render(); }
+async function registrarMerma(id){
+  if(registrandoMerma) return;
+  const cant=Math.floor(Number(document.getElementById('m-cant-'+id).value));
+  const motivo=document.getElementById('m-mot-'+id).value.trim();
+  if(!(cant>=1)){ alert('Escribe cuántas piezas se tiraron.'); return; }
+  if(!motivo){ alert('Indica el motivo de la merma.'); return; }
+  registrandoMerma=true;
+  try{
+    const r=await api('registrarMerma',{id,cantidad:cant,motivo});
+    if(r&&r.ok){ mermaAbierta=null; await cargarInsumos(true); await loadAll(); }
+  } finally { registrandoMerma=false; }
 }
 async function guardarProducto(id){
   const stock=Number(document.getElementById('p-stock-'+id).value)||0;
@@ -416,6 +435,7 @@ function renderPendientes(){
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
+    <div style="margin-top:8px"><label>Propina (opcional)</label><input id="prop-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="$ 0"></div>
     <button class="primary" style="margin-top:8px" onclick="aprobar('${o.id}')">✅ Validé el pago, aprobar</button>
     ${botonesCancelacion(o)}
   </div>`).join('');
@@ -606,6 +626,10 @@ function renderRegistrar(){
   const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${esc(i.nombre)}</span><span>${fmt(i.precio*i.cantidad)}<button class="xbtn" title="Quitar" ${i.opcion?`data-o="${esc(i.opcion)}" onclick="quitarExtra(this.dataset.o)"`:`onclick="quitarItem('${i.id}')"`}>✕</button></span></div>`).join('')}
     ${pct>0?`<div class="orderline small"><span>Subtotal</span><span>${fmt(sub)}</span></div><div class="orderline small"><span>${pct===100?'Cortesía':'Descuento '+pct+'%'}</span><span>−${fmt(sub-totalConDesc)}</span></div>`:''}
     <div class="orderline" style="font-weight:bold;color:var(--accent)"><span>Total</span><span>${fmt(totalConDesc)}</span></div>
+    ${pct===100?'':`<label style="margin-top:8px">Propina (opcional)</label>
+    <div class="chips" style="padding-bottom:4px">${[0,10,20,50].map(v=>`<button class="${propinaReg===v?'active':''}" onclick="setPropina(${v})">${v===0?'Sin propina':'$'+v}</button>`).join('')}<input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(propinaReg)?'':propinaReg}" oninput="propinaInput(this.value)"></div>
+    <div class="orderline small"><span>Propina</span><span id="propTxt">${fmt(propinaReg)}</span></div>
+    <div class="orderline" style="font-weight:bold"><span>A cobrar al cliente</span><span id="cobrarTxt">${fmt(Math.round((totalConDesc+propinaReg)*100)/100)}</span></div>`}
     <label style="margin-top:8px">Descuento</label>
     <div class="chips" style="padding-bottom:4px">${chipD(0,'Ninguno')}${chipD(10,'10%')}${chipD(15,'15%')}${chipD(100,'🎁 Cortesía')}</div>
     ${pct>0?`<div style="margin:6px 0"><label>Motivo (obligatorio)</label><input value="${esc(motivoDesc)}" placeholder="Ej: cumpleaños, error en el servicio" oninput="motivoDesc=this.value"></div>`:''}
@@ -638,8 +662,9 @@ function esperadoCaja(dia){
   const suma=t=>ms.filter(m=>m.tipo===t).reduce((a,m)=>a+m.monto,0);
   const ventas=orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && o.metodo==='efectivo' && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+o.total,0);
   const fondo=FONDO_CAJA, ent=suma('entrada'), sal=suma('salida');   // los movimientos 'fondo' viejos ya no cuentan
+  const prop=orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && o.metodo==='efectivo' && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+(o.propina||0),0);   // propinas en efectivo: entran al cajón
   const arqs=ms.filter(m=>m.tipo==='arqueo');
-  return { fondo, ent, sal, ventas, esperado:Math.round((fondo+ventas+ent-sal)*100)/100, arqueo:arqs.length?arqs[0]:null };
+  return { fondo, ent, sal, ventas, prop, esperado:Math.round((fondo+ventas+prop+ent-sal)*100)/100, arqueo:arqs.length?arqs[0]:null };
 }
 function setCont(pref,i,v){
   const c=pref==='mv'?cntMv:cntAr; c[i]=Math.max(0,Math.min(100000,Math.floor(Number(v)||0)));
@@ -755,7 +780,7 @@ function renderCaja(){
   const cab=`<div class="card" style="padding:10px;margin-bottom:8px">
     <div class="orderline" style="align-items:center;gap:8px"><div><div class="small">💵 Debe haber en caja</div><div style="font-size:1.9rem;font-weight:bold;line-height:1.1">${fmt(R.esperado)}</div></div>
       </div>
-    <div style="display:flex;gap:5px;margin-top:8px">${mini('🏦 Fondo fijo',fmt(R.fondo))}${mini('+ Ventas 💵',fmt(R.ventas),'#1e8449')}${mini('+ Entradas',fmt(R.ent),'#1e8449')}${mini('− Salidas',fmt(R.sal),'#c0392b')}</div><div class="small" style="margin-top:6px">💰 Por retirar al cierre (sobre el fondo): <strong>${fmt(Math.round((R.esperado-R.fondo)*100)/100)}</strong></div>
+    <div style="display:flex;gap:5px;margin-top:8px">${mini('🏦 Fondo fijo',fmt(R.fondo))}${mini('+ Ventas 💵',fmt(R.ventas),'#1e8449')}${R.prop>0?mini('+ Propinas 💵',fmt(R.prop),'#1e8449'):''}${mini('+ Entradas',fmt(R.ent),'#1e8449')}${mini('− Salidas',fmt(R.sal),'#c0392b')}</div><div class="small" style="margin-top:6px">💰 Por retirar al cierre (sobre el fondo): <strong>${fmt(Math.round((R.esperado-R.fondo)*100)/100)}</strong></div>
     <div class="small" style="margin-top:4px">🧾 Ventas del día <strong>${fmt(C.total)}</strong> = 💵 ${fmt(C.ef)} + 💳 ${fmt(C.tj)}${sinM>0?` + <span style="color:#c0392b">⚠️ ${fmt(sinM)} sin método</span>`:''} · solo el efectivo entra a la caja</div>${arq}</div>`;
   const registro = !esHoy ? `<p class="small" style="margin:0 0 6px">Estás viendo otro día. <a href="#" onclick="cajaDia=fechaLocal(new Date());render();return false">Volver a hoy</a></p>` : `<div class="card" style="padding:10px;margin-bottom:8px">
     <div style="display:flex;gap:6px"><input id="cj-concepto" style="flex:2;min-width:0" value="${esc(cjConcepto)}" placeholder="Concepto (para qué)" oninput="cjConcepto=this.value">
@@ -861,9 +886,17 @@ function renderInventario(){
   const tarjetas = lista.length ? lista.map(p=>`<div class="card"><div class="orderline"><strong>${esc(p.nombre)}</strong><span class="small">${esc(p.categoria||'')}</span></div>
     <div class="row" style="margin-top:8px"><div><label>Precio</label><input id="p-precio-${p.id}" type="number" value="${p.precio}" ${esAdmin?'':'disabled'}></div>
     <div><label>Stock</label><input id="p-stock-${p.id}" type="number" value="${p.stock}"></div></div>
-    <button class="secondary" style="margin-top:8px" onclick="guardarProducto('${p.id}')">Guardar</button></div>`).join('')
+    <div style="display:flex;gap:8px;margin-top:8px"><button class="secondary" style="flex:1" onclick="guardarProducto('${p.id}')">Guardar</button><button class="secondary" style="flex:1" onclick="toggleMerma('${p.id}')">🗑️ Merma</button></div>
+    ${mermaAbierta===p.id?`<div class="card small" style="background:var(--bg2);margin-top:8px"><strong>Registrar merma de ${esc(p.nombre)}</strong>
+      <div class="row" style="margin-top:6px"><div><label>Piezas que se tiran</label><input id="m-cant-${p.id}" type="number" min="1" inputmode="numeric" placeholder="1"></div>
+      <div><label>Motivo (obligatorio)</label><input id="m-mot-${p.id}" maxlength="100" placeholder="Ej: caducó"></div></div>
+      <div class="chips" style="padding:6px 0">${['Caducó','Se cayó','Mal estado','Error de preparación','Muestra / degustación'].map(t=>`<button data-t="${esc(t)}" onclick="document.getElementById('m-mot-${p.id}').value=this.dataset.t">${esc(t)}</button>`).join('')}</div>
+      <button class="primary" style="width:100%" onclick="registrarMerma('${p.id}')">Registrar merma (descuenta del stock)</button></div>`:''}</div>`).join('')
     : '<p class="empty">No se encontró ningún artículo.</p>';
-  return agregar + buscador + tarjetas;
+  const mermas=movs.filter(m=>m.tipo==='merma' && String(m.insumoId).startsWith('prod')).slice(0,15);
+  const cuando=f=>{ const d=new Date(f); return isNaN(d)?'':d.toLocaleString('es-MX',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); };
+  const recientes=`<div class="card"><strong>Mermas recientes de productos</strong><div style="margin-top:6px">${mermas.length?mermas.map(m=>`<div class="orderline small"><span>${cuando(m.fecha)} · ${esc(String(m.insumo).replace(/ \(producto\)$/,''))} · ${esc(m.motivo||'')}${m.por?' <em>('+esc(m.por)+')</em>':''}</span><strong>−${Math.abs(m.cantidad)}</strong></div>`).join(''):'<p class="empty small" style="margin:4px 0">Sin mermas registradas.</p>'}</div></div>`;
+  return agregar + buscador + tarjetas + recientes;
 }
 let repDesde=fechaLocal(new Date()), repHasta=fechaLocal(new Date()), repRapido='hoy';
 function repPreset(tipo){
@@ -881,10 +914,11 @@ function cierreDia(dia){
   const R=esperadoCaja(dia);
   const total=v.reduce((t,o)=>t+o.total,0);
   const tj=v.filter(o=>o.metodo==='tarjeta').reduce((t,o)=>t+o.total,0);
-  const retirar=Math.round((R.ventas+R.ent-R.sal)*100)/100;   // efectivo que queda sobre el fondo fijo
+  const propTj=v.filter(o=>o.metodo==='tarjeta').reduce((t,o)=>t+(o.propina||0),0);
+  const retirar=Math.round((R.ventas+R.prop+R.ent-R.sal)*100)/100;   // efectivo que queda sobre el fondo fijo
   const dif=(R.arqueo && R.arqueo.esperado!==null) ? Math.round((R.arqueo.monto-R.arqueo.esperado)*100)/100 : null;
   const hayMov=caja.some(m=>fechaLocal(m.fecha)===dia);
-  return { dia, pedidos:v, n:v.length, total, ef:R.ventas, tj, ent:R.ent, sal:R.sal, retirar, esperado:R.esperado, dif, hayMov };
+  return { dia, pedidos:v, n:v.length, total, ef:R.ventas, tj, propEf:R.prop, propTj, ent:R.ent, sal:R.sal, retirar, esperado:R.esperado, dif, hayMov };
 }
 function diasEntre(d1,d2){
   const [y1,m1,dd1]=d1.split('-').map(Number), [y2,m2,dd2]=d2.split('-').map(Number);
@@ -907,6 +941,7 @@ function renderReporte(){
   const dias=diasEntre(repDesde,repHasta).map(cierreDia);
   const todos=dias.flatMap(d=>d.pedidos);
   const sum=k=>Math.round(dias.reduce((t,d)=>t+d[k],0)*100)/100;
+  const propEf=sum('propEf'), propTj=sum('propTj');
   const total=sum('total'), ef=sum('ef'), tj=sum('tj'), ent=sum('ent'), sal=sum('sal'), retirar=sum('retirar');
   const otro=Math.round((total-ef-tj)*100)/100;
   const difs=dias.filter(d=>d.dif!==null), difTot=Math.round(difs.reduce((t,d)=>t+d.dif,0)*100)/100;
@@ -922,10 +957,12 @@ function renderReporte(){
     <div class="card stat"><div class="n">${todos.length}</div><div class="l">Pedidos</div></div></div>
     <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(ef)}</div><div class="l">Ventas en efectivo</div></div>
     <div class="card stat"><div class="n">💳 ${fmt(tj)}</div><div class="l">Ventas con tarjeta</div></div></div>
-    ${otro>0?`<div class="card small" style="text-align:center">Sin método registrado: ${fmt(otro)}</div>`:''}`;
+    ${otro>0?`<div class="card small" style="text-align:center">Sin método registrado: ${fmt(otro)}</div>`:''}
+    ${(propEf+propTj)>0?`<div class="card small" style="text-align:center">🙏 Propinas (no son venta): <strong>${fmt(propEf+propTj)}</strong> · 💵 ${fmt(propEf)} · 💳 ${fmt(propTj)}</div>`:''}`;
   const unDiaCaja = unDia ? (()=>{ const d=dias[0]; return `<div class="card stat"><div class="n" style="font-size:1.8rem">${fmt(d.esperado)}</div><div class="l">💵 Debe haber en caja al cierre (incluye fondo fijo ${fmt(FONDO_CAJA)})</div></div>`; })() : '';
   const cajaCard=`${unDiaCaja}<div class="card small"><strong>💰 Flujo de efectivo del periodo</strong>
     <div class="orderline"><span>Ventas en efectivo</span><span>${fmt(ef)}</span></div>
+    ${propEf>0?`<div class="orderline"><span>🙏 Propinas en efectivo</span><span style="color:#1e8449">+${fmt(propEf)}</span></div>`:''}
     <div class="orderline"><span>➕ Entradas de caja</span><span style="color:#1e8449">+${fmt(ent)}</span></div>
     <div class="orderline"><span>➖ Salidas de caja</span><span style="color:#c0392b">−${fmt(sal)}</span></div>
     <div class="orderline" style="font-weight:bold;border-top:1px solid var(--bg2);padding-top:4px;margin-top:4px"><span>Efectivo neto (sobre el fondo)</span><span>${fmt(retirar)}</span></div>
@@ -948,6 +985,7 @@ function renderResumen(){
   const delDia=orders.filter(o=>todayStr(o.fecha)===hoy);
   const cobrados=delDia.filter(o=>['aprobado','listo','entregado'].includes(o.estado));
   const suma=a=>a.reduce((t,o)=>t+o.total,0);
+  const suma0=a=>Math.round(a.reduce((t,o)=>t+(o.propina||0),0)*100)/100;
   const efectivo=suma(cobrados.filter(o=>o.metodo==='efectivo'));
   const tarjeta=suma(cobrados.filter(o=>o.metodo==='tarjeta'));
   const total=suma(cobrados);
@@ -965,15 +1003,16 @@ function renderResumen(){
     sinMetodo>0?`Sin método registrado: ${fmt(sinMetodo)}.`:''
   ].filter(Boolean);
   const fecha=new Date().toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'});
-  const detalle=cobrados.length ? cobrados.map(o=>`<div class="orderline small"><span>${hora(o)} · #${o.num}${/^Pedido #\d+$/.test(o.cliente||'')?'':' '+esc(o.cliente||'')} · ${metodo(o)}${o.descuento>0&&o.descuento<100?' · −'+o.descuento+'%':''}</span><strong>${fmt(o.total)}</strong></div>`).join('')
+  const detalle=cobrados.length ? cobrados.map(o=>`<div class="orderline small"><span>${hora(o)} · #${o.num}${/^Pedido #\d+$/.test(o.cliente||'')?'':' '+esc(o.cliente||'')} · ${metodo(o)}${o.descuento>0&&o.descuento<100?' · −'+o.descuento+'%':''}${o.propina>0?' · 🙏 '+fmt(o.propina):''}</span><strong>${fmt(o.total)}</strong></div>`).join('')
     : '<p class="empty">Todavía no hay cobros registrados hoy.</p>';
   return `<p class="small" style="margin:0 0 10px">${fecha.charAt(0).toUpperCase()+fecha.slice(1)}</p>
   <div class="card stat"><div class="n" style="font-size:2rem">${fmt(total)}</div><div class="l">Total cobrado hoy · ${cobrados.length} venta(s)</div></div>
   <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
   <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>
   ${tarjetaGrupos(cobrados)}
+  ${(()=>{ const pe=suma0(cobrados.filter(o=>o.metodo==='efectivo')), pt=suma0(cobrados.filter(o=>o.metodo==='tarjeta')); return (pe+pt)>0?`<div class="card small" style="text-align:center">🙏 Propinas de hoy (no son venta): <strong>${fmt(pe+pt)}</strong> · 💵 ${fmt(pe)} · 💳 ${fmt(pt)}</div>`:''; })()}
   ${cajaError?'':(()=>{ const R=esperadoCaja(fechaLocal(new Date())); return `<div class="card small"><div class="orderline"><strong>💵 Caja de hoy</strong><a href="#" onclick="setTab('caja');return false">Abrir caja →</a></div>
-    <div class="orderline"><span>🏦 Fondo fijo + ventas en efectivo</span><span>${fmt(R.fondo)} + ${fmt(R.ventas)}</span></div>
+    <div class="orderline"><span>🏦 Fondo fijo + ventas en efectivo${R.prop>0?' + propinas':''}</span><span>${fmt(R.fondo)} + ${fmt(R.ventas)}${R.prop>0?' + '+fmt(R.prop):''}</span></div>
     <div class="orderline"><span>➕ Entradas / ➖ Salidas</span><span><span style="color:#1e8449">+${fmt(R.ent)}</span> / <span style="color:#c0392b">−${fmt(R.sal)}</span></span></div>
     <div class="orderline" style="font-weight:bold;font-size:1rem"><span>Debe haber en caja</span><span>${fmt(R.esperado)}</span></div></div>`; })()}
   ${avisos.length?`<div class="card small" style="background:var(--bg2)">${avisos.map(a=>`<div style="margin:3px 0">${a}</div>`).join('')}</div>`:''}
