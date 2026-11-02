@@ -435,7 +435,7 @@ function renderPendientes(){
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
-    <div style="margin-top:8px"><label>Propina (opcional)</label><input id="prop-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="$ 0"></div>
+    <div style="margin-top:8px"><label>Propina${o.propina>0?' (la indicó el cliente: confirma o corrige)':' (opcional)'}</label><input id="prop-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="$ 0" value="${o.propina>0?o.propina:''}"></div>
     <button class="primary" style="margin-top:8px" onclick="aprobar('${o.id}')">✅ Validé el pago, aprobar</button>
     ${botonesCancelacion(o)}
   </div>`).join('');
