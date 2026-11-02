@@ -261,9 +261,16 @@ async function api(action,payload){
     return r;
   }catch(e){ alert('Sin conexión con el servidor. Intenta de nuevo.'); return {error:'red'}; }
 }
+async function refrescarRapido(){
+  try{
+    const [pr, pe] = await Promise.all([ fetch(`${API_URL}?action=productos`).then(r=>r.json()), fetch(`${API_URL}?action=pedidos`).then(r=>r.json()) ]);
+    if(Array.isArray(pr) && Array.isArray(pe)){ products=pr; orders=pe.sort((a,b)=> new Date(b.fecha)-new Date(a.fecha)); detectNew(orders); }
+    render();
+  }catch(e){}
+}
 async function post(action,payload){
   const res=await api(action,payload);
-  await loadAll();
+  await refrescarRapido();
   return res;
 }
 function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -320,7 +327,7 @@ async function registrarPedidoManual(metodo){
   try{
     const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, propina:(descuentoPct===100?0:propinaReg)});
     if(res && res.ok){ cart={}; extras={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
-    await loadAll();
+    await refrescarRapido();
   } finally { registrando=false; }
 }
 function setPropina(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null; render(); }
@@ -360,9 +367,24 @@ const aprobando=new Set();
 async function aprobar(id){
   if(aprobando.has(id)) return;
   aprobando.add(id);
-  try{ const pi=document.getElementById('prop-'+id); await post('aprobarPedido', {id, propina: pi?Number(pi.value)||0:0}); } finally { aprobando.delete(id); }
+  const pi=document.getElementById('prop-'+id);
+  const propina=pi?Number(pi.value)||0:0;
+  const o=orders.find(x=>x.id===id);
+  const prev=o?{estado:o.estado,propina:o.propina}:null;
+  if(o){ o.estado='aprobado'; o.propina=propina; render(); }      // se ve aprobado al instante; el servidor confirma en segundo plano
+  try{
+    const r=await api('aprobarPedido',{id,propina});
+    if((!r||r.error) && o && prev){ o.estado=prev.estado; o.propina=prev.propina; }
+  } finally { aprobando.delete(id); }
+  refrescarRapido();
 }
-async function marcar(id, estado){ await post('actualizarEstado', {id, estado}); }
+async function marcar(id, estado){
+  const o=orders.find(x=>x.id===id), prev=o&&o.estado;
+  if(o){ o.estado=estado; render(); }
+  const r=await api('actualizarEstado', {id, estado});
+  if((!r||r.error) && o) o.estado=prev;
+  refrescarRapido();
+}
 
 function abrirCancelacion(id){ cancelandoId=id; cancelMotivo=''; render(); }
 function cerrarCancelacion(){ cancelandoId=null; render(); }
