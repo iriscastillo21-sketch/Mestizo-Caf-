@@ -79,16 +79,18 @@ function cartItems(){ const base=Object.entries(cart).map(([id,q])=>{const p=pro
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
 function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0)+extrasCount(); }
 
-let metodoPago = '';
+let metodoPago = '', propinaCli = 0;
+function setPropinaCli(v){ propinaCli=Math.max(0,Math.min(9999,Number(v)||0)); claveEnvio=null; render(); }
+function propinaCliInput(v){ propinaCli=Math.max(0,Math.min(9999,Number(v)||0)); claveEnvio=null; const a=document.getElementById('propTxt'), b=document.getElementById('pagarTxt'); if(a) a.textContent=fmt(propinaCli); if(b) b.textContent=fmt(cartTotal()+propinaCli); }
 async function enviarPedido(metodo){
   const items=cartItems(); if(items.length===0 || enviando) return;
   enviando=true; metodoPago=metodo;
   if(!claveEnvio) claveEnvio=nuevaClave();
   render();
   try{
-    const payload={items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentarios.trim(), metodo, clave:claveEnvio};
+    const payload={items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentarios.trim(), metodo, propina:propinaCli, clave:claveEnvio};
     const res=await fetch(`${API_URL}?action=crearPedido&payload=${encodeURIComponent(JSON.stringify(payload))}`).then(r=>r.json());
-    if(res && res.ok){ cart={}; extras={}; extraAbierto=false; extraSub=''; comentarios=''; claveEnvio=null; numPedido=res.num; step=2; }
+    if(res && res.ok){ cart={}; extras={}; extraAbierto=false; extraSub=''; propinaCli=0; comentarios=''; claveEnvio=null; numPedido=res.num; step=2; }
     else alert('No pudimos registrar tu pedido'+(res&&res.error?': '+res.error:'')+'. Intenta de nuevo.');
   }catch(e){
     alert('No hay conexión. Revisa tu internet e intenta de nuevo: tu pedido no se duplicará.');
@@ -184,6 +186,10 @@ function renderCheckout(){
     <h2 style="margin-top:0">Resumen del pedido</h2>
     ${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline big"><span>Total</span><span>${fmt(cartTotal())}</span></div>
+    <div style="margin:10px 0"><label>¿Quieres dejar propina? (opcional)</label>
+      <div class="chips" style="padding-bottom:4px">${[0,10,20,50].map(v=>`<button class="${propinaCli===v?'active':''}" onclick="setPropinaCli(${v})">${v===0?'Sin propina':'$'+v}</button>`).join('')}<input type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(propinaCli)?'':propinaCli}" oninput="propinaCliInput(this.value)"></div>
+      <div class="orderline small"><span>Propina</span><span id="propTxt">${fmt(propinaCli)}</span></div>
+      <div class="orderline" style="font-weight:bold"><span>Total a pagar</span><span id="pagarTxt">${fmt(cartTotal()+propinaCli)}</span></div></div>
     <div style="margin:14px 0"><label>Tu nombre o número de mesa</label><input placeholder="Ej: Mesa 4 / Ana" value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
     <div style="margin:14px 0"><label>Comentarios adicionales (opcional)</label>
       <textarea rows="3" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentarios=this.value">${esc(comentarios)}</textarea>
