@@ -175,13 +175,21 @@ function updateTitle(){
   const n=orders.filter(o=>o.estado==='pendiente_pago').length;
   document.title=(n>0?'('+n+') ':'')+'Panel Admin · Mestizo Café';
 }
-function startPolling(){ stopPolling(); pollTimer=setInterval(poll,20000); }
+const DIAS_PEDIDOS=40;   // el panel carga solo los últimos días (más rápido); el historial completo se pide cuando hace falta
+let pedidosTodos=false;
+function urlPedidos(){ return `${API_URL}?action=pedidos&payload=${encodeURIComponent(JSON.stringify({dias:pedidosTodos?0:DIAS_PEDIDOS}))}`; }
+function necesitaHistorial(desde){
+  if(pedidosTodos || !desde) return;
+  const lim=new Date(); lim.setDate(lim.getDate()-(DIAS_PEDIDOS-2));
+  if(desde<fechaLocal(lim)){ pedidosTodos=true; refrescarRapido(); }
+}
+function startPolling(){ stopPolling(); pollTimer=setInterval(poll,10000); }
 function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
 async function poll(){
   if(!role) return;
   try{
     pollTick++;
-    const pe=await fetch(`${API_URL}?action=pedidos`).then(r=>r.json());
+    const pe=await fetch(urlPedidos()).then(r=>r.json());
     if(!Array.isArray(pe)) return;
     if(pollTick%3===0){
       const pr=await fetch(`${API_URL}?action=productos`).then(r=>r.json());
@@ -244,7 +252,7 @@ async function cargarCaja(){
 async function loadAll(){
   const [pr, pe] = await Promise.all([
     fetch(`${API_URL}?action=productos`).then(r=>r.json()),
-    fetch(`${API_URL}?action=pedidos`).then(r=>r.json()),
+    fetch(urlPedidos()).then(r=>r.json()),
     cargarInsumos(tab==='ins'||tab==='inv'),
     usaCaja(tab) ? cargarCaja() : Promise.resolve()
   ]);
@@ -263,7 +271,7 @@ async function api(action,payload){
 }
 async function refrescarRapido(){
   try{
-    const [pr, pe] = await Promise.all([ fetch(`${API_URL}?action=productos`).then(r=>r.json()), fetch(`${API_URL}?action=pedidos`).then(r=>r.json()) ]);
+    const [pr, pe] = await Promise.all([ fetch(`${API_URL}?action=productos`).then(r=>r.json()), fetch(urlPedidos()).then(r=>r.json()) ]);
     if(Array.isArray(pr) && Array.isArray(pe)){ products=pr; orders=pe.sort((a,b)=> new Date(b.fecha)-new Date(a.fecha)); detectNew(orders); }
     render();
   }catch(e){}
@@ -312,7 +320,7 @@ function descAvisos(lista){
 function descAvisosCard(lista){ const a=descAvisos(lista); return a.length?`<div class="card small" style="background:var(--bg2)">${a.map(x=>`<div style="margin:3px 0">${x}</div>`).join('')}</div>`:''; }
 function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toFixed(2)); }
 function todayStr(d){ return new Date(d).toDateString(); }
-function setTab(t){ tab=t; render(); if(usaCaja(t)) cargarCaja().then(()=>{ if(tab===t && !escribiendo()) render(); }); if(t==='ins'||t==='inv') cargarInsumos(true).then(()=>{ if(tab===t && !escribiendo()) render(); }); }
+function setTab(t){ tab=t; if(t==='hist' && !pedidosTodos){ pedidosTodos=true; refrescarRapido(); } render(); if(usaCaja(t)) cargarCaja().then(()=>{ if(tab===t && !escribiendo()) render(); }); if(t==='ins'||t==='inv') cargarInsumos(true).then(()=>{ if(tab===t && !escribiendo()) render(); }); }
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function addExtra(label,delta){ const p=products.find(esExtra); if(!p) return; claveReg=null; const next=Math.max(0,Math.min(20,(extras[label]||0)+delta)); if(next) extras[label]=next; else delete extras[label]; render(); }
 function quitarExtra(label){ delete extras[label]; claveReg=null; render(); }
@@ -526,7 +534,7 @@ function renderCancelaciones(){
     <label>Día</label>
     <div class="chips">${chip('hoy','Hoy')}${chip('ayer','Ayer')}${chip('7d','Últimos 7 días')}${chip('mes','Este mes')}</div>
     <div class="row" style="margin-top:6px">
-      <div><label>Desde</label><input type="date" value="${cancDesde}" onchange="cancDesde=this.value;cancRapido='';render()"></div>
+      <div><label>Desde</label><input type="date" value="${cancDesde}" onchange="cancDesde=this.value;cancRapido='';necesitaHistorial(cancDesde);render()"></div>
       <div><label>Hasta</label><input type="date" value="${cancHasta}" onchange="cancHasta=this.value;cancRapido='';render()"></div>
     </div>
     <label style="margin-top:10px">Mostrar</label>
@@ -972,7 +980,7 @@ function renderReporte(){
   const unDia=repDesde===repHasta, hoyStr=fechaLocal(new Date());
   const chip=(id,t)=>`<button class="${repRapido===id?'active':''}" onclick="repPreset('${id}')">${t}</button>`;
   const filtros=`<div class="card"><label>Periodo</label><div class="chips">${chip('hoy','Hoy')}${chip('ayer','Ayer')}${chip('7d','Últimos 7 días')}${chip('mes','Este mes')}</div>
-    <div class="row" style="margin-top:6px"><div><label>Desde</label><input type="date" value="${repDesde}" onchange="repDesde=this.value||repDesde;repRapido='';render()"></div>
+    <div class="row" style="margin-top:6px"><div><label>Desde</label><input type="date" value="${repDesde}" onchange="repDesde=this.value||repDesde;repRapido='';necesitaHistorial(repDesde);render()"></div>
     <div><label>Hasta</label><input type="date" value="${repHasta}" onchange="repHasta=this.value||repHasta;repRapido='';render()"></div></div></div>`;
   if(cajaError) return filtros+`<div class="card"><p style="margin:0">⚠️ ${esc(cajaError)}</p></div>`;
   const ventas=`<div class="stats-row"><div class="card stat"><div class="n">${fmt(total)}</div><div class="l">Venta total</div></div>
