@@ -89,7 +89,8 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
 let products=[], orders=[], cart={}, clientLabel='', tab='pend';
-let propinaReg=0;
+let empleadoMode=false, empleadoNombre='', preciosEsp={};
+let propinaReg=0, libres=[], libreAbierto=false, lbNombre='', lbPrecio='', lbCant='1', lbGrupo='Bebidas', lbIns='', lbInsCant='';
 let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', comentariosReg='', registrando=false, claveReg=null;
 function nuevaClave(){ return 'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,10); }
 let role = localStorage.getItem('mestizo_role') || null;
@@ -282,7 +283,12 @@ async function post(action,payload){
   return res;
 }
 function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function esEmpleado(o){ return o.descuento===0 && /^Empleado:/.test(o.motivoDescuento||''); }
 function descuentoLinea(o){
+  if(esEmpleado(o)){
+    const quien=o.descuentoPor==='admin'?'Administrador':o.descuentoPor==='user'?'Usuario':'';
+    return `<div class="card small" style="background:var(--bg2);margin-top:8px">👤 <strong>Precio de empleado</strong> · ${esc(String(o.motivoDescuento).replace(/^Empleado:\s*/,''))} (valor de lista ${fmt(o.subtotal)}, cobrado ${fmt(o.total)})${quien?' · Autorizó: '+quien:''}</div>`;
+  }
   if(!(o.descuento>0)) return '';
   const quien=o.descuentoPor==='admin'?'Administrador':o.descuentoPor==='user'?'Usuario':'';
   return `<div class="card small" style="background:var(--bg2);margin-top:8px">${o.descuento===100?'🎁 <strong>Cortesía</strong>':'🏷️ <strong>Descuento '+o.descuento+'%</strong>'} (valor de lista ${fmt(o.subtotal)})${o.motivoDescuento?' · Motivo: '+esc(o.motivoDescuento):''}${quien?' · Autorizó: '+quien:''}</div>`;
@@ -312,9 +318,11 @@ function descAvisos(lista){
   const valor=a=>a.reduce((t,o)=>t+(o.subtotal-o.total),0);
   const cort=lista.filter(o=>o.descuento===100);
   const desc=lista.filter(o=>o.descuento>0&&o.descuento<100);
+  const emp=lista.filter(esEmpleado);
   return [
     cort.length?`🎁 ${cort.length} cortesía(s) por valor de ${fmt(valor(cort))} (no suman al total).`:'',
-    desc.length?`🏷️ ${desc.length} venta(s) con descuento: −${fmt(valor(desc))} en total.`:''
+    desc.length?`🏷️ ${desc.length} venta(s) con descuento: −${fmt(valor(desc))} en total.`:'',
+    emp.length?`👤 ${emp.length} venta(s) a precio de empleado: −${fmt(valor(emp))} frente a lista.`:''
   ].filter(Boolean);
 }
 function descAvisosCard(lista){ const a=descAvisos(lista); return a.length?`<div class="card small" style="background:var(--bg2)">${a.map(x=>`<div style="margin:3px 0">${x}</div>`).join('')}</div>`:''; }
@@ -324,19 +332,44 @@ function setTab(t){ tab=t; if(t==='hist' && !pedidosTodos){ pedidosTodos=true; r
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function addExtra(label,delta){ const p=products.find(esExtra); if(!p) return; claveReg=null; const next=Math.max(0,Math.min(20,(extras[label]||0)+delta)); if(next) extras[label]=next; else delete extras[label]; render(); }
 function quitarExtra(label){ delete extras[label]; claveReg=null; render(); }
-function cartItems(){ const base=Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); const pe=products.find(esExtra); const ex=pe?Object.entries(extras).map(([k,q])=>({id:pe.id,nombre:'Extra: '+k,precio:pe.precio,cantidad:q,opcion:k})):[]; return base.concat(ex); }
+function llaveEsp(i){ return i.libre ? '' : (i.opcion ? 'e:'+i.opcion : 'p:'+i.id); }
+function aplicaEsp(arr){
+  return arr.map(i=>{ i.precioLista=i.precio; i.key=llaveEsp(i);
+    if(empleadoMode && i.key){ const v=preciosEsp[i.key]; if(v!==undefined && !isNaN(v) && v>=0 && v<=i.precioLista){ i.precio=v; i.especial=true; } }
+    return i; });
+}
+function cartItems(){ const base0=Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); const pe=products.find(esExtra); const ex=pe?Object.entries(extras).map(([k,q])=>({id:pe.id,nombre:'Extra: '+k,precio:pe.precio,cantidad:q,opcion:k})):[]; const lb=libres.map((l,k)=>({id:'libre',nombre:l.nombre,precio:l.precio,cantidad:l.cantidad,libre:true,grupo:l.grupo,insumoId:l.insumoId,insumoCant:l.insumoCant,idx:k})); return aplicaEsp(base0.concat(ex,lb)); }
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
 
 async function registrarPedidoManual(metodo){
   const items=cartItems(); if(items.length===0 || registrando) return;
   if(descuentoPct>0 && !motivoDesc.trim()){ alert('Escribe el motivo del descuento o cortesía.'); return; }
+  if(items.some(i=>i.especial) && !empleadoNombre.trim()){ alert('Escribe el nombre del empleado para aplicar el precio especial.'); return; }
   registrando=true;
   if(!claveReg) claveReg=nuevaClave();
   try{
-    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, propina:(descuentoPct===100?0:propinaReg)});
-    if(res && res.ok){ cart={}; extras={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
+    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>i.libre?{id:'libre',libre:true,nombre:i.nombre,precio:i.precio,grupo:i.grupo,cantidad:i.cantidad,insumoId:i.insumoId||'',insumoCant:i.insumoCant||0}:(i.especial?{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',precioEspecial:i.precio}:{id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, empleado:empleadoNombre.trim(), propina:(descuentoPct===100?0:propinaReg)});
+    if(res && res.ok){ cart={}; extras={}; libres=[]; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
     await refrescarRapido();
   } finally { registrando=false; }
+}
+function agregarLibre(){
+  const nombre=lbNombre.trim(), precio=Number(lbPrecio), cant=Math.floor(Number(lbCant)||1);
+  if(!nombre){ alert('Escribe el nombre del artículo (ej. Vaso de leche).'); return; }
+  if(!(precio>0)){ alert('Escribe el precio.'); return; }
+  if(!(cant>=1 && cant<=99)){ alert('La cantidad debe ser de 1 a 99.'); return; }
+  const insC=Number(lbInsCant);
+  if(lbIns && !(insC>0)){ alert('Indica cuánto del insumo se descuenta por cada unidad (ej. 250 ml).'); return; }
+  const l=libres.find(x=>x.nombre===nombre && x.precio===precio && x.grupo===lbGrupo && x.insumoId===(lbIns||'') && (x.insumoCant||0)===(lbIns?insC:0));
+  if(l) l.cantidad=Math.min(99,l.cantidad+cant); else libres.push({nombre,precio,cantidad:cant,grupo:lbGrupo,insumoId:lbIns||'',insumoCant:lbIns?insC:0});
+  claveReg=null; lbNombre=''; lbPrecio=''; lbCant='1'; lbIns=''; lbInsCant=''; render();
+}
+function quitarLibre(k){ libres.splice(k,1); claveReg=null; render(); }
+function toggleEmpleado(){ empleadoMode=!empleadoMode; if(empleadoMode){ descuentoPct=0; motivoDesc=''; } else { preciosEsp={}; } claveReg=null; render(); }
+function precioEspInput(key,val){
+  preciosEsp[key]=(val==='')?undefined:Number(val); claveReg=null;
+  const t=cartTotal(), a=document.getElementById('totTxt'), b=document.getElementById('cobrarTxt');
+  if(a) a.textContent=fmt(t); if(b) b.textContent=fmt(Math.round((t+propinaReg)*100)/100);
 }
 function setPropina(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null; render(); }
 function propinaInput(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null;
@@ -369,7 +402,7 @@ function celdaExtra(p){
 function quitarItem(id){ delete cart[id]; claveReg=null; render(); }
 function vaciarPedido(){
   if(!confirm('¿Vaciar el pedido actual?')) return;
-  cart={}; extras={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
+  cart={}; extras={}; libres=[]; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
 }
 const aprobando=new Set();
 async function aprobar(id){
@@ -653,16 +686,20 @@ function renderRegistrar(){
   const sub=cartTotal(), pct=descuentoPct;
   const totalConDesc=Math.round(sub*(100-pct))/100;
   const chipD=(v,txt)=>`<button class="${descuentoPct===v?'active':''}" onclick="setDescuento(${v})">${txt}</button>`;
-  const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${esc(i.nombre)}</span><span>${fmt(i.precio*i.cantidad)}<button class="xbtn" title="Quitar" ${i.opcion?`data-o="${esc(i.opcion)}" onclick="quitarExtra(this.dataset.o)"`:`onclick="quitarItem('${i.id}')"`}>✕</button></span></div>`).join('')}
+  const insTxt=i=>{ if(!i.insumoId) return ''; const n=insumos.find(x=>x.id===i.insumoId); return n?`<br><span class="small">↳ descuenta ${Math.round(i.insumoCant*i.cantidad*1000)/1000} ${esc(n.unidad)} de ${esc(n.nombre)}</span>`:''; };
+  const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${esc(i.nombre)}${insTxt(i)}</span><span>${empleadoMode&&i.key?`<input class="nospin" type="number" inputmode="decimal" min="0" step="any" style="width:64px;padding:4px 6px" data-k="${esc(i.key)}" value="${preciosEsp[i.key]!==undefined?preciosEsp[i.key]:i.precioLista}" oninput="precioEspInput(this.dataset.k,this.value)"> <span class="small">c/u (lista ${fmt(i.precioLista)})</span> `:fmt(i.precio*i.cantidad)}<button class="xbtn" title="Quitar" ${i.libre?`onclick="quitarLibre(${i.idx})"`:i.opcion?`data-o="${esc(i.opcion)}" onclick="quitarExtra(this.dataset.o)"`:`onclick="quitarItem('${i.id}')"`}>✕</button></span></div>`).join('')}
     ${pct>0?`<div class="orderline small"><span>Subtotal</span><span>${fmt(sub)}</span></div><div class="orderline small"><span>${pct===100?'Cortesía':'Descuento '+pct+'%'}</span><span>−${fmt(sub-totalConDesc)}</span></div>`:''}
-    <div class="orderline" style="font-weight:bold;color:var(--accent)"><span>Total</span><span>${fmt(totalConDesc)}</span></div>
+    <div class="orderline" style="font-weight:bold;color:var(--accent)"><span>Total</span><span id="totTxt">${fmt(totalConDesc)}</span></div>
     ${pct===100?'':`<label style="margin-top:8px">Propina (opcional)</label>
     <div class="chips" style="padding-bottom:4px">${[0,10,20,50].map(v=>`<button class="${propinaReg===v?'active':''}" onclick="setPropina(${v})">${v===0?'Sin propina':'$'+v}</button>`).join('')}<input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(propinaReg)?'':propinaReg}" oninput="propinaInput(this.value)"></div>
     <div class="orderline small"><span>Propina</span><span id="propTxt">${fmt(propinaReg)}</span></div>
     <div class="orderline" style="font-weight:bold"><span>A cobrar al cliente</span><span id="cobrarTxt">${fmt(Math.round((totalConDesc+propinaReg)*100)/100)}</span></div>`}
-    <label style="margin-top:8px">Descuento</label>
+    ${pct===0?`<label style="margin-top:8px">Precio de empleado</label>
+    <div class="chips" style="padding-bottom:4px"><button class="${empleadoMode?'active':''}" onclick="toggleEmpleado()">👤 ${empleadoMode?'Activado (toca para quitar)':'Activar precio especial'}</button></div>
+    ${empleadoMode?`<div class="small" style="margin-bottom:4px">Escribe en cada artículo el precio que se le cobra al empleado (nunca mayor al de lista).</div><div style="margin:4px 0"><label>Empleado (obligatorio)</label><input maxlength="60" placeholder="Nombre del empleado" value="${esc(empleadoNombre)}" oninput="empleadoNombre=this.value"></div>`:''}`:''}
+    ${empleadoMode?'':`<label style="margin-top:8px">Descuento</label>
     <div class="chips" style="padding-bottom:4px">${chipD(0,'Ninguno')}${chipD(10,'10%')}${chipD(15,'15%')}${chipD(100,'🎁 Cortesía')}</div>
-    ${pct>0?`<div style="margin:6px 0"><label>Motivo (obligatorio)</label><input value="${esc(motivoDesc)}" placeholder="Ej: cumpleaños, error en el servicio" oninput="motivoDesc=this.value"></div>`:''}
+    ${pct>0?`<div style="margin:6px 0"><label>Motivo (obligatorio)</label><input value="${esc(motivoDesc)}" placeholder="Ej: cumpleaños, error en el servicio" oninput="motivoDesc=this.value"></div>`:''}`}
     <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
     <div style="margin:10px 0"><label>Comentarios o restricciones del cliente (opcional)</label>
       <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea>
@@ -671,8 +708,20 @@ function renderRegistrar(){
       ? `<button class="primary" style="flex:1" onclick="registrarPedidoManual('cortesia')">🎁 Registrar cortesía</button>`
       : `<button class="primary" style="flex:1" onclick="registrarPedidoManual('efectivo')">💵 Efectivo</button><button class="primary" style="flex:1" onclick="registrarPedidoManual('tarjeta')">💳 Tarjeta</button>`}</div>
     <button class="secondary" style="width:100%;margin-top:8px" onclick="vaciarPedido()">🗑️ Vaciar pedido</button></div>`:'';
+  const gchip=g=>`<button class="${lbGrupo===g?'active':''}" onclick="lbGrupo='${g}';render()">${g}</button>`;
+  const libreCard=`<div class="card" style="padding:10px"><div class="orderline" style="align-items:center"><strong>🧾 Artículo fuera del menú</strong><a href="#" onclick="libreAbierto=!libreAbierto;render();return false">${libreAbierto?'Cerrar ▴':'Agregar ▾'}</a></div>
+    ${libreAbierto?`<div class="small" style="margin:4px 0 8px">Para algo que el cliente compra y no está en el menú (ej. un vaso de leche). No descuenta stock de productos; si lo ligas a un insumo, descuenta ese insumo.</div>
+    <div class="row"><div style="flex:2"><label>Nombre</label><input maxlength="60" placeholder="Ej: Vaso de leche" value="${esc(lbNombre)}" oninput="lbNombre=this.value"></div>
+    <div><label>Precio $</label><input class="nospin" type="number" inputmode="decimal" min="0" placeholder="0" value="${esc(lbPrecio)}" oninput="lbPrecio=this.value"></div>
+    <div><label>Cant.</label><input class="nospin" type="number" inputmode="numeric" min="1" value="${esc(lbCant)}" oninput="lbCant=this.value"></div></div>
+    ${(insumos&&insumos.length&&!insumosError)?`<label style="margin-top:6px">Descontar de un insumo (opcional)</label>
+    <select onchange="lbIns=this.value;render()" style="width:100%;background:var(--bg2);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 10px"><option value="">— No descontar —</option>${[...insumos].sort((a,b)=>String(a.nombre).localeCompare(String(b.nombre),'es')).map(n=>`<option value="${esc(n.id)}" ${lbIns===n.id?'selected':''}>${esc(n.nombre)} (${esc(n.unidad)})</option>`).join('')}</select>
+    ${lbIns?(()=>{ const n=insumos.find(x=>x.id===lbIns); return n?`<div style="margin-top:6px"><label>Cuánto se descuenta por cada unidad vendida (${esc(n.unidad)})</label><input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Ej: 250" value="${esc(lbInsCant)}" oninput="lbInsCant=this.value"><div class="small">Stock actual: ${n.stock} ${esc(n.unidad)}</div></div>`:''; })():''}`:''}
+    <label style="margin-top:6px">Cuenta como</label><div class="chips" style="padding-bottom:4px">${['Bebidas','Alimentos','Pan'].map(gchip).join('')}</div>
+    <button class="primary" style="width:100%" onclick="agregarLibre()">+ Agregar al pedido</button>`:''}</div>`;
   return `<p class="small">Cuando el cliente pague en efectivo o con terminal, registra aquí lo que llevó: descuenta el stock y queda en el reporte del día.</p>
   ${resumen}
+  ${libreCard}
   ${buscador}
   <div class="card lista">${html}</div>`;
 }
@@ -871,7 +920,7 @@ function renderInsumos(){
     <input id="insBuscar" type="search" placeholder="🔍 Buscar insumo…" value="${esc(busquedaIns)}" oninput="busquedaIns=this.value;render()" autocomplete="off">
     <div class="chips" style="margin-top:8px">${cats.map(c=>`<button class="${!q&&c===catActiva?'active':''}" data-c="${esc(c)}" onclick="catIns=this.dataset.c;busquedaIns='';render()">${esc(c)}</button>`).join('')}</div>
     <div class="small" style="margin-top:6px">${lista.length} insumo${lista.length===1?'':'s'}${q?' encontrados':' en '+esc(catActiva||'')}</div></div>`;
-  const tipoTxt={entrada:'➕ Entrada',merma:'🗑️ Merma',conteo:'🔢 Conteo'};
+  const tipoTxt={entrada:'➕ Entrada',merma:'🗑️ Merma',conteo:'🔢 Conteo',venta:'🧾 Venta'};
   const filaMov=m=>`<div class="orderline small"><span>${cuandoTxt(m.fecha)} · ${tipoTxt[m.tipo]||m.tipo}${m.insumo&&insHist===null?' · '+esc(m.insumo):''}${m.motivo?' · '+esc(m.motivo):''} <em>(${m.por==='admin'?'Admin':'Staff'})</em></span><span>${m.cantidad>0?'+':''}${fmtNum(m.cantidad)} → ${fmtNum(m.stock)}</span></div>`;
   const tarjetas = lista.length ? lista.map(i=>{
     const bajo=i.minimo>0 && i.stock<=i.minimo;
@@ -956,7 +1005,7 @@ function diasEntre(d1,d2){
   return out;
 }
 // ---- Ventas por grupo: Alimentos, Bebidas y Pan ----
-function grupoDe(i){ const pr=products.find(x=>x.id===i.id); const c=String(pr?pr.categoria:'').trim().toLowerCase(); return c==='alimentos'?'Alimentos':c==='pan'?'Pan':'Bebidas'; }
+function grupoDe(i){ if(i.libre && ['Alimentos','Pan','Bebidas'].includes(i.grupo)) return i.grupo; const pr=products.find(x=>x.id===i.id); const c=String(pr?pr.categoria:'').trim().toLowerCase(); return c==='alimentos'?'Alimentos':c==='pan'?'Pan':'Bebidas'; }
 function tarjetaGrupos(peds){
   const g={Alimentos:{u:0,m:0},Bebidas:{u:0,m:0},Pan:{u:0,m:0}}; let sub=0, tot=0;
   peds.forEach(o=>{ tot+=o.total; o.items.forEach(i=>{ const k=grupoDe(i), m=i.precio*i.cantidad; g[k].u+=i.cantidad; g[k].m+=m; sub+=m; }); });
