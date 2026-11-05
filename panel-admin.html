@@ -89,6 +89,7 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
 let products=[], orders=[], cart={}, clientLabel='', tab='pend';
+let mixtoAbierto=false, mixtoEf='';
 let empleadoMode=false, empleadoNombre='', preciosEsp={};
 let propinaReg=0, libres=[], libreAbierto=false, lbNombre='', lbPrecio='', lbCant='1', lbGrupo='Bebidas', lbIns='', lbInsCant='';
 let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', comentariosReg='', registrando=false, claveReg=null;
@@ -283,6 +284,25 @@ async function post(action,payload){
   return res;
 }
 function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// Reparte un pedido cobrado entre efectivo y tarjeta (venta y propina). En pago mixto, el efectivo cubre primero la venta y lo que sobre es propina en efectivo.
+function r2(n){ return Math.round(n*100)/100; }
+function partesPago(o){
+  const prop=o.propina||0;
+  if(o.metodo==='efectivo') return {efV:o.total,tjV:0,efP:prop,tjP:0};
+  if(o.metodo==='tarjeta') return {efV:0,tjV:o.total,efP:0,tjP:prop};
+  if(o.metodo==='mixto'){
+    const c=Math.max(0,Math.min(o.pagoEfectivo||0,o.total+prop)), efV=Math.min(c,o.total), efP=r2(c-efV);
+    return {efV:r2(efV),tjV:r2(o.total-efV),efP,tjP:r2(prop-efP)};
+  }
+  return {efV:0,tjV:0,efP:0,tjP:0};
+}
+function metodoTxt(o){
+  if(o.metodo==='efectivo') return '💵 Efectivo';
+  if(o.metodo==='tarjeta') return '💳 Tarjeta';
+  if(o.metodo==='cortesia') return '🎁 Cortesía';
+  if(o.metodo==='mixto'){ const q=partesPago(o), ef=r2(q.efV+q.efP), tj=r2(q.tjV+q.tjP); return `💵💳 Mixto (💵 ${fmt(ef)} + 💳 ${fmt(tj)})`; }
+  return '';
+}
 function esEmpleado(o){ return o.descuento===0 && /^Empleado:/.test(o.motivoDescuento||''); }
 function descuentoLinea(o){
   if(esEmpleado(o)){
@@ -345,11 +365,12 @@ async function registrarPedidoManual(metodo){
   const items=cartItems(); if(items.length===0 || registrando) return;
   if(descuentoPct>0 && !motivoDesc.trim()){ alert('Escribe el motivo del descuento o cortesía.'); return; }
   if(items.some(i=>i.especial) && !empleadoNombre.trim()){ alert('Escribe el nombre del empleado para aplicar el precio especial.'); return; }
+  if(metodo==='mixto'){ const ef=Number(mixtoEf), cobrar=cobrarTotal(); if(!(ef>0 && ef<cobrar)){ alert('En pago mixto escribe cuánto se recibió en efectivo: debe ser mayor a 0 y menor al total a cobrar ('+fmt(cobrar)+').'); return; } }
   registrando=true;
   if(!claveReg) claveReg=nuevaClave();
   try{
-    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>i.libre?{id:'libre',libre:true,nombre:i.nombre,precio:i.precio,grupo:i.grupo,cantidad:i.cantidad,insumoId:i.insumoId||'',insumoCant:i.insumoCant||0}:(i.especial?{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',precioEspecial:i.precio}:{id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, empleado:empleadoNombre.trim(), propina:(descuentoPct===100?0:propinaReg)});
-    if(res && res.ok){ cart={}; extras={}; libres=[]; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
+    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>i.libre?{id:'libre',libre:true,nombre:i.nombre,precio:i.precio,grupo:i.grupo,cantidad:i.cantidad,insumoId:i.insumoId||'',insumoCant:i.insumoCant||0}:(i.especial?{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',precioEspecial:i.precio}:{id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, empleado:empleadoNombre.trim(), propina:(descuentoPct===100?0:propinaReg), pagoEfectivo:(metodo==='mixto'?Number(mixtoEf):0)});
+    if(res && res.ok){ cart={}; extras={}; libres=[]; mixtoAbierto=false; mixtoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
     await refrescarRapido();
   } finally { registrando=false; }
 }
@@ -370,9 +391,13 @@ function precioEspInput(key,val){
   preciosEsp[key]=(val==='')?undefined:Number(val); claveReg=null;
   const t=cartTotal(), a=document.getElementById('totTxt'), b=document.getElementById('cobrarTxt');
   if(a) a.textContent=fmt(t); if(b) b.textContent=fmt(Math.round((t+propinaReg)*100)/100);
+  actualizarMixtoTj();
 }
 function setPropina(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null; render(); }
-function propinaInput(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null;
+function cobrarTotal(){ return r2(cartTotal()*(100-descuentoPct)/100+propinaReg); }
+function actualizarMixtoTj(){ const e=document.getElementById('mixtoTj'); if(e) e.textContent=fmt(Math.max(0,r2(cobrarTotal()-(Number(mixtoEf)||0)))); }
+function mixtoInput(v){ mixtoEf=v; claveReg=null; actualizarMixtoTj(); }
+function propinaInput(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null; setTimeout(actualizarMixtoTj,0);
   const a=document.getElementById('propTxt'), b=document.getElementById('cobrarTxt');
   if(a) a.textContent=fmt(propinaReg); if(b) b.textContent=fmt(Math.round((cartTotal()*(100-descuentoPct)/100+propinaReg)*100)/100); }
 function setDescuento(v){ descuentoPct=v; if(v===0) motivoDesc=''; render(); }
@@ -402,7 +427,7 @@ function celdaExtra(p){
 function quitarItem(id){ delete cart[id]; claveReg=null; render(); }
 function vaciarPedido(){
   if(!confirm('¿Vaciar el pedido actual?')) return;
-  cart={}; extras={}; libres=[]; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
+  cart={}; extras={}; libres=[]; mixtoAbierto=false; mixtoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
 }
 const aprobando=new Set();
 async function aprobar(id){
@@ -411,11 +436,13 @@ async function aprobar(id){
   const pi=document.getElementById('prop-'+id);
   const propina=pi?Number(pi.value)||0:0;
   const o=orders.find(x=>x.id===id);
-  const prev=o?{estado:o.estado,propina:o.propina}:null;
-  if(o){ o.estado='aprobado'; o.propina=propina; render(); }      // se ve aprobado al instante; el servidor confirma en segundo plano
+  const mx=document.getElementById('mix-'+id), mixto=mx?Number(mx.value)||0:0;
+  if(mixto>0 && o && !(mixto<r2(o.total+propina))){ alert('En pago mixto el efectivo debe ser menor al total a cobrar ('+fmt(r2(o.total+propina))+').'); aprobando.delete(id); return; }
+  const prev=o?{estado:o.estado,propina:o.propina,metodo:o.metodo,pagoEfectivo:o.pagoEfectivo}:null;
+  if(o){ o.estado='aprobado'; o.propina=propina; if(mixto>0){ o.metodo='mixto'; o.pagoEfectivo=mixto; } render(); }      // se ve aprobado al instante; el servidor confirma en segundo plano
   try{
-    const r=await api('aprobarPedido',{id,propina});
-    if((!r||r.error) && o && prev){ o.estado=prev.estado; o.propina=prev.propina; }
+    const r=await api('aprobarPedido',mixto>0?{id,propina,metodo:'mixto',pagoEfectivo:mixto}:{id,propina});
+    if((!r||r.error) && o && prev){ o.estado=prev.estado; o.propina=prev.propina; o.metodo=prev.metodo; o.pagoEfectivo=prev.pagoEfectivo; }
   } finally { aprobando.delete(id); }
   refrescarRapido();
 }
@@ -494,11 +521,12 @@ function renderPendientes(){
   const pend = orders.filter(o=>o.estado==='pendiente_pago');
   if(pend.length===0) return '<p class="empty">No hay pedidos esperando validación de pago.</p>';
   return pend.map(o=>`<div class="card">
-    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':'pendiente'}</span></div>
+    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${metodoTxt(o)||'pendiente'}</span></div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
     <div style="margin-top:8px"><label>Propina${o.propina>0?' (la indicó el cliente: confirma o corrige)':' (opcional)'}</label><input id="prop-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="$ 0" value="${o.propina>0?o.propina:''}"></div>
+    <div style="margin-top:8px"><label>Pago mixto (opcional): efectivo recibido $ — el resto es tarjeta</label><input id="mix-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="Solo si pagó parte en efectivo y parte con tarjeta"></div>
     <button class="primary" style="margin-top:8px" onclick="aprobar('${o.id}')">✅ Validé el pago, aprobar</button>
     ${botonesCancelacion(o)}
   </div>`).join('');
@@ -537,7 +565,7 @@ function fechaCanc(o){ return o.fechaCancelacion || o.fecha; }   // si no hay fe
 function cuandoTxt(v){ return v ? new Date(v).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'}) : ''; }
 function tarjetaCancelacion(o){
   const sol = o.estado==='cancelacion_solicitada';
-  const metodo = o.metodo ? (o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':'🎁 Cortesía') : '';
+  const metodo = o.metodo ? metodoTxt(o) : '';
   const quien = o.canceladoPor==='admin' ? 'Administrador' : o.canceladoPor==='user' ? 'Staff' : '';
   return `<div class="card">
     <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${sol?'por cancelar':'cancelado'}</span></div>
@@ -598,8 +626,8 @@ function renderHistorial(){
     histEstado==='pendientes' ? ['pendiente_pago','cancelacion_solicitada'].includes(o.estado) : true);
   const ventas = enRango.filter(o=>vendidos.includes(o.estado));
   const total = ventas.reduce((s,o)=>s+o.total,0);
-  const efectivo = ventas.filter(o=>o.metodo==='efectivo').reduce((s,o)=>s+o.total,0);
-  const tarjeta = ventas.filter(o=>o.metodo==='tarjeta').reduce((s,o)=>s+o.total,0);
+  const efectivo = ventas.reduce((s,o)=>s+partesPago(o).efV,0);
+  const tarjeta = ventas.reduce((s,o)=>s+partesPago(o).tjV,0);
   const cancelados = enRango.filter(o=>o.estado==='cancelado').length;
   const chip = (id,txt)=>`<button class="${histRapido===id?'active':''}" onclick="histPreset('${id}')">${txt}</button>`;
   const chipE = (id,txt)=>`<button class="${histEstado===id?'active':''}" onclick="histEstado='${id}';render()">${txt}</button>`;
@@ -620,7 +648,7 @@ function renderHistorial(){
   if(list.length===0) return filtros + resumen + descAvisosCard(ventas) + '<p class="empty">Sin pedidos con esos filtros.</p>';
   const detalle = list.map(o=>`<div class="card">
     <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${o.estado.replace('_',' ')}</span></div>
-    <div class="small">${new Date(o.fecha).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'})}${o.metodo?' · '+(o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':'🎁 Cortesía'):''}</div>
+    <div class="small">${new Date(o.fecha).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'})}${o.metodo?' · '+metodoTxt(o):''}</div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
@@ -707,6 +735,11 @@ function renderRegistrar(){
     <div style="display:flex;gap:8px">${pct===100
       ? `<button class="primary" style="flex:1" onclick="registrarPedidoManual('cortesia')">🎁 Registrar cortesía</button>`
       : `<button class="primary" style="flex:1" onclick="registrarPedidoManual('efectivo')">💵 Efectivo</button><button class="primary" style="flex:1" onclick="registrarPedidoManual('tarjeta')">💳 Tarjeta</button>`}</div>
+    ${pct===100?'':`<button class="secondary" style="width:100%;margin-top:6px" onclick="mixtoAbierto=!mixtoAbierto;render()">💵💳 Pago mixto ${mixtoAbierto?'▴':'▾'}</button>
+    ${mixtoAbierto?`<div class="card small" style="background:var(--bg2);margin-top:6px"><div class="small" style="margin-bottom:4px">Cuando el cliente paga una parte en efectivo y el resto con tarjeta.</div>
+      <label>Efectivo recibido $</label><input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Ej: 50" value="${esc(mixtoEf)}" oninput="mixtoInput(this.value)">
+      <div class="orderline" style="margin-top:6px"><span>💳 Resto en tarjeta</span><strong id="mixtoTj">${fmt(Math.max(0,r2(totalConDesc+propinaReg-(Number(mixtoEf)||0))))}</strong></div>
+      <button class="primary" style="width:100%" onclick="registrarPedidoManual('mixto')">Registrar pago mixto</button></div>`:''}`}
     <button class="secondary" style="width:100%;margin-top:8px" onclick="vaciarPedido()">🗑️ Vaciar pedido</button></div>`:'';
   const gchip=g=>`<button class="${lbGrupo===g?'active':''}" onclick="lbGrupo='${g}';render()">${g}</button>`;
   const libreCard=`<div class="card" style="padding:10px"><div class="orderline" style="align-items:center"><strong>🧾 Artículo fuera del menú</strong><a href="#" onclick="libreAbierto=!libreAbierto;render();return false">${libreAbierto?'Cerrar ▴':'Agregar ▾'}</a></div>
@@ -739,9 +772,9 @@ function desgloseTxt(o){ return Object.keys(o||{}).sort((a,b)=>b-a).map(k=>`${o[
 function esperadoCaja(dia){
   const ms=caja.filter(m=>fechaLocal(m.fecha)===dia && !m.anulado);
   const suma=t=>ms.filter(m=>m.tipo===t).reduce((a,m)=>a+m.monto,0);
-  const ventas=orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && o.metodo==='efectivo' && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+o.total,0);
+  const ventas=r2(orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+partesPago(o).efV,0));
   const fondo=FONDO_CAJA, ent=suma('entrada'), sal=suma('salida');   // los movimientos 'fondo' viejos ya no cuentan
-  const prop=orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && o.metodo==='efectivo' && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+(o.propina||0),0);   // propinas en efectivo: entran al cajón
+  const prop=r2(orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+partesPago(o).efP,0));   // propinas en efectivo: entran al cajón
   const arqs=ms.filter(m=>m.tipo==='arqueo');
   return { fondo, ent, sal, ventas, prop, esperado:Math.round((fondo+ventas+prop+ent-sal)*100)/100, arqueo:arqs.length?arqs[0]:null };
 }
@@ -992,8 +1025,8 @@ function cierreDia(dia){
   const v=orders.filter(o=>VENDIDOS.includes(o.estado) && fechaLocal(o.fecha)===dia);
   const R=esperadoCaja(dia);
   const total=v.reduce((t,o)=>t+o.total,0);
-  const tj=v.filter(o=>o.metodo==='tarjeta').reduce((t,o)=>t+o.total,0);
-  const propTj=v.filter(o=>o.metodo==='tarjeta').reduce((t,o)=>t+(o.propina||0),0);
+  const tj=r2(v.reduce((t,o)=>t+partesPago(o).tjV,0));
+  const propTj=r2(v.reduce((t,o)=>t+partesPago(o).tjP,0));
   const retirar=Math.round((R.ventas+R.prop+R.ent-R.sal)*100)/100;   // efectivo que queda sobre el fondo fijo
   const dif=(R.arqueo && R.arqueo.esperado!==null) ? Math.round((R.arqueo.monto-R.arqueo.esperado)*100)/100 : null;
   const hayMov=caja.some(m=>fechaLocal(m.fecha)===dia);
@@ -1065,15 +1098,15 @@ function renderResumen(){
   const cobrados=delDia.filter(o=>['aprobado','listo','entregado'].includes(o.estado));
   const suma=a=>a.reduce((t,o)=>t+o.total,0);
   const suma0=a=>Math.round(a.reduce((t,o)=>t+(o.propina||0),0)*100)/100;
-  const efectivo=suma(cobrados.filter(o=>o.metodo==='efectivo'));
-  const tarjeta=suma(cobrados.filter(o=>o.metodo==='tarjeta'));
+  const efectivo=r2(cobrados.reduce((t,o)=>t+partesPago(o).efV,0));
+  const tarjeta=r2(cobrados.reduce((t,o)=>t+partesPago(o).tjV,0));
   const total=suma(cobrados);
   const sinMetodo=Math.round((total-efectivo-tarjeta)*100)/100;
   const pend=delDia.filter(o=>o.estado==='pendiente_pago');
   const enRevision=delDia.filter(o=>o.estado==='cancelacion_solicitada');
   const cancelados=delDia.filter(o=>o.estado==='cancelado');
   const hora=o=>new Date(o.fecha).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
-  const metodo=o=>o.metodo==='efectivo'?'💵 Efectivo':o.metodo==='tarjeta'?'💳 Tarjeta':o.metodo==='cortesia'?'🎁 Cortesía':'Sin método';
+  const metodo=o=>metodoTxt(o)||'Sin método';
   const avisos=[
     ...descAvisos(cobrados),
     pend.length?`⏳ ${pend.length} pedido(s) por cobrar (${fmt(suma(pend))}) aún no cuentan en el total.`:'',
@@ -1089,7 +1122,7 @@ function renderResumen(){
   <div class="stats-row"><div class="card stat"><div class="n">💵 ${fmt(efectivo)}</div><div class="l">Efectivo</div></div>
   <div class="card stat"><div class="n">💳 ${fmt(tarjeta)}</div><div class="l">Tarjeta</div></div></div>
   ${tarjetaGrupos(cobrados)}
-  ${(()=>{ const pe=suma0(cobrados.filter(o=>o.metodo==='efectivo')), pt=suma0(cobrados.filter(o=>o.metodo==='tarjeta')); return (pe+pt)>0?`<div class="card small" style="text-align:center">🙏 Propinas de hoy (no son venta): <strong>${fmt(pe+pt)}</strong> · 💵 ${fmt(pe)} · 💳 ${fmt(pt)}</div>`:''; })()}
+  ${(()=>{ const pe=r2(cobrados.reduce((t,o)=>t+partesPago(o).efP,0)), pt=r2(cobrados.reduce((t,o)=>t+partesPago(o).tjP,0)); return (pe+pt)>0?`<div class="card small" style="text-align:center">🙏 Propinas de hoy (no son venta): <strong>${fmt(pe+pt)}</strong> · 💵 ${fmt(pe)} · 💳 ${fmt(pt)}</div>`:''; })()}
   ${cajaError?'':(()=>{ const R=esperadoCaja(fechaLocal(new Date())); return `<div class="card small"><div class="orderline"><strong>💵 Caja de hoy</strong><a href="#" onclick="setTab('caja');return false">Abrir caja →</a></div>
     <div class="orderline"><span>🏦 Fondo fijo + ventas en efectivo${R.prop>0?' + propinas':''}</span><span>${fmt(R.fondo)} + ${fmt(R.ventas)}${R.prop>0?' + '+fmt(R.prop):''}</span></div>
     <div class="orderline"><span>➕ Entradas / ➖ Salidas</span><span><span style="color:#1e8449">+${fmt(R.ent)}</span> / <span style="color:#c0392b">−${fmt(R.sal)}</span></span></div>
