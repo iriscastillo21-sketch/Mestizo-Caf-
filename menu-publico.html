@@ -63,7 +63,7 @@ document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAUR
 let enviando=false, claveEnvio=null, numPedido=null;
 let products=[], cart={}, step=0, clientLabel='', comentarios='', busqueda='', catSel='', buscadorFoco=false;
 function esc(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function fmt(n){ return '$'+Number(n).toFixed(0); }
+function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toFixed(2)); }   // pesos mexicanos (MXN)
 
 async function loadProducts(){
   try{
@@ -194,6 +194,7 @@ function renderCheckout(){
     <div style="margin:14px 0"><label>Comentarios adicionales (opcional)</label>
       <textarea rows="3" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentarios=this.value">${esc(comentarios)}</textarea>
       <div class="small" style="margin-top:4px">Indica aquí cualquier preferencia o restricción alimenticia.</div></div>
+    <div class="small" style="margin:0 0 8px">Todos los precios están en pesos mexicanos (MXN).</div>
     <label style="margin-bottom:8px">¿Cómo vas a pagar?</label>
     <div class="actions" style="display:flex;gap:10px">
       <button class="secondary" style="flex:1;padding:14px" ${enviando?'disabled style="opacity:.6"':''} onclick="enviarPedido('efectivo')">${enviando&&metodoPago==='efectivo'?'Enviando…':'💵 Efectivo'}</button>
