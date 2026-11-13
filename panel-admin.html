@@ -461,9 +461,14 @@ async function confirmarSolicitudCancelacion(id){
   await post('solicitarCancelacion', {id, motivo:cancelMotivo});
   cancelandoId=null; render();
 }
+let cancelandoBusy=false;
 async function cancelarDirecto(id){
+  if(cancelandoBusy) return;
   if(!cancelMotivo.trim()){ alert('Escribe el motivo de la cancelación.'); return; }
-  await post('cancelarPedido', {id, motivo:cancelMotivo});
+  const o=orders.find(x=>x.id===id);
+  if(!confirm('¿Cancelar el pedido'+(o?' #'+o.num:'')+'? Quedará registrado con tu motivo.')) return;
+  cancelandoBusy=true;
+  try{ await post('cancelarPedido', {id, motivo:cancelMotivo}); } finally { cancelandoBusy=false; }
   cancelandoId=null; render();
 }
 async function resolverCancelacion(id, aprobar){
@@ -502,19 +507,20 @@ async function guardarProducto(id){
   }
 }
 
+function motivoRapido(t){ cancelMotivo=t; render(); }
 function botonesCancelacion(o){
   if(o.estado==='cancelado' || o.estado==='cancelacion_solicitada') return '';
   if(cancelandoId===o.id){
-    const accion = role==='admin' ? `cancelarDirecto('${o.id}')` : `confirmarSolicitudCancelacion('${o.id}')`;
     return `<div style="margin-top:8px">
-      <label>Motivo de la cancelación</label>
-      <textarea rows="2" oninput="cancelMotivo=this.value">${esc(cancelMotivo)}</textarea>
+      <label>Motivo de la cancelación (obligatorio, queda registrado)</label>
+      <textarea rows="2" maxlength="200" oninput="cancelMotivo=this.value">${esc(cancelMotivo)}</textarea>
+      <div class="chips" style="padding:6px 0">${['Error en el pedido','El cliente se arrepintió','Sin producto','Cobro duplicado','Pedido de prueba'].map(t=>`<button data-t="${esc(t)}" onclick="motivoRapido(this.dataset.t)">${esc(t)}</button>`).join('')}</div>
       <div style="display:flex;gap:8px;margin-top:6px">
-        <button class="danger" style="flex:1" onclick="${accion}">${role==='admin'?'Cancelar pedido':'Enviar solicitud'}</button>
+        <button class="danger" style="flex:1" onclick="cancelarDirecto('${o.id}')">Cancelar pedido</button>
         <button class="secondary" style="flex:1" onclick="cerrarCancelacion()">Cerrar</button>
       </div></div>`;
   }
-  return `<button class="secondary" style="margin-top:8px" onclick="abrirCancelacion('${o.id}')">🚫 ${role==='admin'?'Cancelar pedido':'Solicitar cancelación'}</button>`;
+  return `<button class="secondary" style="margin-top:8px" onclick="abrirCancelacion('${o.id}')">🚫 Cancelar pedido</button>`;
 }
 
 function renderPendientes(){
@@ -543,7 +549,7 @@ function renderHoy(){
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
     ${o.estado==='cancelacion_solicitada'?`<div class="card small" style="background:var(--bg2);margin-top:8px">⏳ Esperando que el administrador apruebe la cancelación.${o.motivoCancelacion?' Motivo: '+esc(o.motivoCancelacion):''}</div>`:''}
-    ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="card small" style="background:var(--bg2);margin-top:8px">Motivo de cancelación: ${esc(o.motivoCancelacion)}</div>`:''}
+    ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="card small" style="background:var(--bg2);margin-top:8px">Motivo de cancelación: ${esc(o.motivoCancelacion)}${o.canceladoPor?' · Canceló: '+(o.canceladoPor==='admin'?'Administrador':'Staff'):''}${o.fechaCancelacion?' · '+cuandoTxt(o.fechaCancelacion):''}</div>`:''}
     <div style="margin-top:8px;display:flex;gap:8px">
       ${o.estado==='aprobado'?`<button class="primary" onclick="marcar('${o.id}','listo')">🔔 Marcar listo</button>`:''}
       ${o.estado==='listo'?`<button class="primary" onclick="marcar('${o.id}','entregado')">📣 Entregado</button>`:''}
@@ -570,7 +576,7 @@ function tarjetaCancelacion(o){
   return `<div class="card">
     <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${sol?'por cancelar':'cancelado'}</span></div>
     <div class="small">Pedido: ${cuandoTxt(o.fecha)}${metodo?' · '+metodo:''}</div>
-    <div class="small">${sol?'Solicitada':'Cancelación'}: ${cuandoTxt(fechaCanc(o))}${quien?' · por '+quien:''}${!sol&&o.fechaResolucion?' · aprobada '+cuandoTxt(o.fechaResolucion):''}</div>
+    <div class="small">${sol?'Solicitada':'Cancelación'}: ${cuandoTxt(fechaCanc(o))}${quien?' · por '+quien:''}${!sol&&o.fechaResolucion&&Math.abs(new Date(o.fechaResolucion)-new Date(fechaCanc(o)))>60000?' · aprobada '+cuandoTxt(o.fechaResolucion):''}</div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${esc(i.nombre)}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
