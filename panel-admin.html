@@ -89,7 +89,7 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
 let products=[], orders=[], cart={}, clientLabel='', tab='pend';
-let mixtoAbierto=false, mixtoEf='';
+let mixtoAbierto=false, mixtoEf='', recibidoEf='';
 let empleadoMode=false, empleadoNombre='', preciosEsp={};
 let propinaReg=0, libres=[], libreAbierto=false, lbNombre='', lbPrecio='', lbCant='1', lbGrupo='Bebidas', lbIns='', lbInsCant='';
 let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', comentariosReg='', registrando=false, claveReg=null;
@@ -370,7 +370,7 @@ async function registrarPedidoManual(metodo){
   if(!claveReg) claveReg=nuevaClave();
   try{
     const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>i.libre?{id:'libre',libre:true,nombre:i.nombre,precio:i.precio,grupo:i.grupo,cantidad:i.cantidad,insumoId:i.insumoId||'',insumoCant:i.insumoCant||0}:(i.especial?{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',precioEspecial:i.precio}:{id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, empleado:empleadoNombre.trim(), propina:(descuentoPct===100?0:propinaReg), pagoEfectivo:(metodo==='mixto'?Number(mixtoEf):0)});
-    if(res && res.ok){ cart={}; extras={}; libres=[]; mixtoAbierto=false; mixtoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
+    if(res && res.ok){ cart={}; extras={}; libres=[]; mixtoAbierto=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
     await refrescarRapido();
   } finally { registrando=false; }
 }
@@ -395,7 +395,22 @@ function precioEspInput(key,val){
 }
 function setPropina(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null; render(); }
 function cobrarTotal(){ return r2(cartTotal()*(100-descuentoPct)/100+propinaReg); }
-function actualizarMixtoTj(){ const e=document.getElementById('mixtoTj'); if(e) e.textContent=fmt(Math.max(0,r2(cobrarTotal()-(Number(mixtoEf)||0)))); }
+function cambioHTML(total,rec){
+  rec=Number(rec)||0; if(!(rec>0)) return '<span class="small">Escribe o toca lo que entregó el cliente</span>';
+  const d=r2(rec-total);
+  if(d<0) return `<span style="color:#c0392b;font-weight:bold">Faltan ${fmt(-d)}</span>`;
+  if(d===0) return '<span style="color:#1e8449;font-weight:bold">Pago exacto, sin cambio</span>';
+  return `<span style="color:#1e8449;font-weight:bold;font-size:1.25em">Cambio: ${fmt(d)}</span>`;
+}
+function cambioPend(id){
+  const o=orders.find(x=>x.id===id), r=document.getElementById('rec-'+id), p=document.getElementById('prop-'+id), e=document.getElementById('camb-'+id);
+  if(!o||!r||!e) return; e.innerHTML=cambioHTML(r2(o.total+(Number(p&&p.value)||0)),r.value);
+}
+function actualizarCambio(){ const e=document.getElementById('cambioTxt'); if(e) e.innerHTML=cambioHTML(cobrarTotal(),recibidoEf); }
+function recibidoInput(v){ recibidoEf=v; actualizarCambio(); }
+function setRecibido(v){ recibidoEf=(v===null?String(cobrarTotal()):String(v)); render(); }
+function billetesSug(total){ const b=[20,50,100,200,500,1000].filter(x=>x>=total); return b.slice(0,4); }
+function actualizarMixtoTj(){ actualizarCambio(); const e=document.getElementById('mixtoTj'); if(e) e.textContent=fmt(Math.max(0,r2(cobrarTotal()-(Number(mixtoEf)||0)))); }
 function mixtoInput(v){ mixtoEf=v; claveReg=null; actualizarMixtoTj(); }
 function propinaInput(v){ propinaReg=Math.max(0,Math.min(9999,Number(v)||0)); claveReg=null; setTimeout(actualizarMixtoTj,0);
   const a=document.getElementById('propTxt'), b=document.getElementById('cobrarTxt');
@@ -427,7 +442,7 @@ function celdaExtra(p){
 function quitarItem(id){ delete cart[id]; claveReg=null; render(); }
 function vaciarPedido(){
   if(!confirm('¿Vaciar el pedido actual?')) return;
-  cart={}; extras={}; libres=[]; mixtoAbierto=false; mixtoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
+  cart={}; extras={}; libres=[]; mixtoAbierto=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
 }
 const aprobando=new Set();
 async function aprobar(id){
@@ -531,7 +546,8 @@ function renderPendientes(){
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
-    <div style="margin-top:8px"><label>Propina${o.propina>0?' (la indicó el cliente: confirma o corrige)':' (opcional)'}</label><input id="prop-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="$ 0" value="${o.propina>0?o.propina:''}"></div>
+    <div style="margin-top:8px"><label>Propina${o.propina>0?' (la indicó el cliente: confirma o corrige)':' (opcional)'}</label><input id="prop-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="$ 0" value="${o.propina>0?o.propina:''}" oninput="cambioPend('${o.id}')"></div>
+    <div style="margin-top:8px"><label>💵 Calculadora de cambio (opcional): cuánto entregó el cliente $</label><input id="rec-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="Ej: 200" oninput="cambioPend('${o.id}')"><div id="camb-${o.id}" style="margin-top:4px"></div></div>
     <div style="margin-top:8px"><label>Pago mixto (opcional): efectivo recibido $ — el resto es tarjeta</label><input id="mix-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="Solo si pagó parte en efectivo y parte con tarjeta"></div>
     <button class="primary" style="margin-top:8px" onclick="aprobar('${o.id}')">✅ Validé el pago, aprobar</button>
     ${botonesCancelacion(o)}
@@ -738,6 +754,10 @@ function renderRegistrar(){
     <div style="margin:10px 0"><label>Comentarios o restricciones del cliente (opcional)</label>
       <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea>
       <div class="chips" style="padding:6px 0 0"><button onclick="addNota('Leche deslactosada')">+ Leche deslactosada</button><button onclick="addNota('Sin azúcar')">+ Sin azúcar</button><button onclick="addNota('Alergia a ')">+ Alergia</button></div></div>
+    ${pct===100?'':(()=>{ const tc=r2(totalConDesc+propinaReg); return `<div class="card small" style="background:var(--bg2);margin:8px 0"><label>💵 Calculadora de cambio (solo para cobrar, no se guarda)</label>
+      <div class="chips" style="padding:4px 0"><button onclick="setRecibido(null)">Exacto</button>${billetesSug(tc).map(v=>`<button class="${Number(recibidoEf)===v?'active':''}" onclick="setRecibido(${v})">$${v}</button>`).join('')}</div>
+      <input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otro monto recibido $" value="${esc(recibidoEf)}" oninput="recibidoInput(this.value)">
+      <div id="cambioTxt" style="margin-top:6px">${cambioHTML(tc,recibidoEf)}</div></div>`; })()}
     <div style="display:flex;gap:8px">${pct===100
       ? `<button class="primary" style="flex:1" onclick="registrarPedidoManual('cortesia')">🎁 Registrar cortesía</button>`
       : `<button class="primary" style="flex:1" onclick="registrarPedidoManual('efectivo')">💵 Efectivo</button><button class="primary" style="flex:1" onclick="registrarPedidoManual('tarjeta')">💳 Tarjeta</button>`}</div>
