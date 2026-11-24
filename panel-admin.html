@@ -357,24 +357,30 @@ function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toF
 function todayStr(d){ return new Date(d).toDateString(); }
 function setTab(t){ tab=t; if(t==='hist' && !pedidosTodos){ pedidosTodos=true; refrescarRapido(); } render(); if(usaCaja(t)) cargarCaja().then(()=>{ if(tab===t && !escribiendo()) render(); }); if(t==='ins'||t==='inv') cargarInsumos(true).then(()=>{ if(tab===t && !escribiendo()) render(); }); }
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null;
+  if(tieneSabor(p)){
+    if(delta>0){ if(saborQty(id)>=p.stock) return; saborUnits.push({id,s:SIN_SABOR}); }
+    else { const i=saborUnits.map(u=>u.id).lastIndexOf(id); if(i<0) return; saborUnits.splice(i,1); }
+    faltaSabor=false; render(); return;
+  }
   if(tieneLeche(p)){
-    if(delta>0){ if(lecheQty(id)>=p.stock) return; const k=id+'|Entera'; lecheCart[k]=(lecheCart[k]||0)+1; }
-    else { const l=[...LECHES].reverse().find(x=>lecheCart[id+'|'+x]); if(!l) return; const k=id+'|'+l; lecheCart[k]--; if(!lecheCart[k]) delete lecheCart[k]; }
+    if(delta>0){ if(lecheQty(id)>=p.stock) return; lecheUnits.push({id,l:'Entera'}); }
+    else { const i=lecheUnits.map(u=>u.id).lastIndexOf(id); if(i<0) return; lecheUnits.splice(i,1); }
     render(); return;
   } const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function addExtra(label,delta){ const p=products.find(esExtra); if(!p) return; claveReg=null; const next=Math.max(0,Math.min(20,(extras[label]||0)+delta)); if(next) extras[label]=next; else delete extras[label]; render(); }
 function quitarExtra(label){ delete extras[label]; claveReg=null; render(); }
-function llaveEsp(i){ return i.libre ? '' : (i.opcion ? 'e:'+i.opcion : 'p:'+i.id+(i.leche?'|'+i.leche:'')); }
+function llaveEsp(i){ return i.libre ? '' : (i.opcion ? 'e:'+i.opcion : 'p:'+i.id+(i.leche?'|'+i.leche:'')+(i.sabor?'|'+i.sabor:'')); }
 function aplicaEsp(arr){
   return arr.map(i=>{ i.precioLista=i.precio; i.key=llaveEsp(i);
     if(empleadoMode && i.key){ const v=preciosEsp[i.key]; if(v!==undefined && !isNaN(v) && v>=0 && v<=i.precioLista){ i.precio=v; i.especial=true; } }
     return i; });
 }
-function cartItems(){ const base0=Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); const pe=products.find(esExtra); const ex=pe?Object.entries(extras).map(([k,q])=>({id:pe.id,nombre:'Extra: '+k,precio:pe.precio,cantidad:q,opcion:k})):[]; const lb=libres.map((l,k)=>({id:'libre',nombre:l.nombre,precio:l.precio,cantidad:l.cantidad,libre:true,grupo:l.grupo,insumoId:l.insumoId,insumoCant:l.insumoCant,idx:k})); return aplicaEsp(base0.concat(lecheItems(),ex,lb)); }
+function cartItems(){ const base0=Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); const pe=products.find(esExtra); const ex=pe?Object.entries(extras).map(([k,q])=>({id:pe.id,nombre:'Extra: '+k,precio:pe.precio,cantidad:q,opcion:k})):[]; const lb=libres.map((l,k)=>({id:'libre',nombre:l.nombre,precio:l.precio,cantidad:l.cantidad,libre:true,grupo:l.grupo,insumoId:l.insumoId,insumoCant:l.insumoCant,idx:k})); return aplicaEsp(base0.concat(lecheItems(),saborItems(),ex,lb)); }
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
 
 async function registrarPedidoManual(metodo){
   const items=cartItems(); if(items.length===0 || registrando) return;
+  if(saborPendiente()){ faltaSabor=true; render(); return; }
   if(!metodo){ faltaMetodoReg=true; render(); return; }
   if(descuentoPct>0 && !motivoDesc.trim()){ alert('Escribe el motivo del descuento o cortesía.'); return; }
   if(items.some(i=>i.especial) && !empleadoNombre.trim()){ alert('Escribe el nombre del empleado para aplicar el precio especial.'); return; }
@@ -382,8 +388,8 @@ async function registrarPedidoManual(metodo){
   registrando=true;
   if(!claveReg) claveReg=nuevaClave();
   try{
-    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>i.libre?{id:'libre',libre:true,nombre:i.nombre,precio:i.precio,grupo:i.grupo,cantidad:i.cantidad,insumoId:i.insumoId||'',insumoCant:i.insumoCant||0}:(i.especial?{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||'',precioEspecial:i.precio}:{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, empleado:empleadoNombre.trim(), propina:(descuentoPct===100?0:propinaReg), pagoEfectivo:(metodo==='mixto'?Number(mixtoEf):0)});
-    if(res && res.ok){ cart={}; lecheCart={}; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
+    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>i.libre?{id:'libre',libre:true,nombre:i.nombre,precio:i.precio,grupo:i.grupo,cantidad:i.cantidad,insumoId:i.insumoId||'',insumoCant:i.insumoCant||0}:(i.especial?{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||'',sabor:i.sabor||'',precioEspecial:i.precio}:{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||'',sabor:i.sabor||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, empleado:empleadoNombre.trim(), propina:(descuentoPct===100?0:propinaReg), pagoEfectivo:(metodo==='mixto'?Number(mixtoEf):0)});
+    if(res && res.ok){ cart={}; lecheUnits=[]; saborUnits=[]; faltaSabor=false; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
     await refrescarRapido();
   } finally { registrando=false; }
 }
@@ -456,7 +462,7 @@ function celdaExtra(p){
 function quitarItem(id){ delete cart[id]; claveReg=null; render(); }
 function vaciarPedido(){
   if(!confirm('¿Vaciar el pedido actual?')) return;
-  cart={}; lecheCart={}; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
+  cart={}; lecheUnits=[]; saborUnits=[]; faltaSabor=false; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
 }
 const aprobando=new Set();
 async function aprobar(id){
@@ -750,21 +756,36 @@ function tieneLeche(p){
   return false;
 }
 const LECHES=['Entera','Deslactosada','Soya'];
-let lecheCart={};   // 'id|Leche' -> cantidad (por defecto 'Entera'; el cliente elige la leche en el resumen)
+let lecheUnits=[];   // una entrada {id,l} por bebida, en el orden en que se agregaron (la leche se elige en el resumen)
 function extraPrecio(){ const e=products.find(esExtra); return e?e.precio:0; }
-function lecheQty(id){ return LECHES.reduce((s,l)=>s+(lecheCart[id+'|'+l]||0),0); }
-function quitarLeche(k){ delete lecheCart[k]; claveReg=null; render(); }
-function cambiarLecheUnidad(id,de,a){ if(de===a) return; const kd=id+'|'+de; if(!lecheCart[kd]) return; lecheCart[kd]--; if(!lecheCart[kd]) delete lecheCart[kd]; const ka=id+'|'+a; lecheCart[ka]=(lecheCart[ka]||0)+1; claveReg=null; render(); }
+function lecheQty(id){ return lecheUnits.filter(u=>u.id===id).length; }
+function quitarLeche(k){ const [id,l]=k.split('|'); lecheUnits=lecheUnits.filter(u=>!(u.id===id&&u.l===l)); claveReg=null; render(); }
+function cambiarLecheUnidad(i,a){ if(!lecheUnits[i]) return; lecheUnits[i].l=a; claveReg=null; render(); }
 function selectorLeche(){
-  const ids=[...new Set(Object.keys(lecheCart).map(k=>k.split('|')[0]))]; if(!ids.length) return '';
-  const ex=extraPrecio(); let n=0;
-  const filas=ids.map(id=>{ const p=products.find(x=>x.id===id); if(!p) return ''; let h='';
-    LECHES.forEach(l=>{ for(let j=0;j<(lecheCart[id+'|'+l]||0);j++){ n++;
-      h+=`<div style="margin:6px 0"><div class="small">${esc(p.nombre)} · bebida ${n}</div><div class="chips" style="flex-wrap:wrap;overflow:visible;padding:2px 0">${LECHES.map(x=>`<button class="${x===l?'active':''}" onclick="cambiarLecheUnidad('${id}','${l}','${x}')">${x}${x==='Soya'&&ex?' +$'+ex:''}</button>`).join('')}</div></div>`; } });
-    return h; }).join('');
+  if(!lecheUnits.length) return ''; const ex=extraPrecio();
+  const filas=lecheUnits.map((u,i)=>{ const p=products.find(x=>x.id===u.id); if(!p) return '';
+    return `<div style="margin:6px 0"><div class="small">${esc(p.nombre)} · bebida ${i+1}</div><div class="chips" style="flex-wrap:wrap;overflow:visible;padding:2px 0">${LECHES.map(x=>`<button class="${x===u.l?'active':''}" onclick="cambiarLecheUnidad(${i},'${x}')">${x}${x==='Soya'&&ex?' +$'+ex:''}</button>`).join('')}</div></div>`; }).join('');
   return `<div style="margin:10px 0"><label>🥛 Tipo de leche de cada bebida</label>${filas}</div>`;
 }
-function lecheItems(){ return Object.entries(lecheCart).map(([k,q])=>{ const [id,l]=k.split('|'); const p=products.find(x=>x.id===id); if(!p) return null; const sx=(l==='Soya')?extraPrecio():0; return {id,nombre:p.nombre+' · Leche '+l.toLowerCase()+(sx?' (+$'+sx+')':''),precio:p.precio+sx,cantidad:q,leche:l}; }).filter(Boolean); }
+function lecheItems(){ const m=new Map(); lecheUnits.forEach(u=>{ const k=u.id+'|'+u.l; m.set(k,(m.get(k)||0)+1); });
+  return [...m].map(([k,q])=>{ const [id,l]=k.split('|'); const p=products.find(x=>x.id===id); if(!p) return null; const sx=(l==='Soya')?extraPrecio():0; return {id,nombre:p.nombre+' · Leche '+l.toLowerCase()+(sx?' (+$'+sx+')':''),precio:p.precio+sx,cantidad:q,leche:l}; }).filter(Boolean); }
+
+function tieneSabor(p){ return !!p && /tamal/i.test(String(p.nombre||'')); }
+const SABORES=['Rojo','Verde','Rajas con queso'], SIN_SABOR='Sin elegir';
+let saborUnits=[], faltaSabor=false;   // una entrada {id,s} por tamal; 'Sin elegir' hasta que se elige el sabor
+function saborQty(id){ return saborUnits.filter(u=>u.id===id).length; }
+function saborPendiente(){ return saborUnits.some(u=>u.s===SIN_SABOR); }
+function avisoSabor(){ return (faltaSabor&&saborPendiente())?'<div class="small" style="color:#c0392b;font-weight:bold;margin:4px 0">Elige el sabor de cada tamal.</div>':''; }
+function quitarSabor(k){ const [id,s]=k.split('|'); saborUnits=saborUnits.filter(u=>!(u.id===id&&u.s===(s||SIN_SABOR))); faltaSabor=false; claveReg=null; render(); }
+function cambiarSaborUnidad(i,a){ if(!saborUnits[i]) return; saborUnits[i].s=a; faltaSabor=false; claveReg=null; render(); }
+function selectorSabor(){
+  if(!saborUnits.length) return '';
+  const filas=saborUnits.map((u,i)=>{ const p=products.find(x=>x.id===u.id); if(!p) return '';
+    return `<div style="margin:6px 0"><div class="small">${esc(p.nombre)} · tamal ${i+1}${u.s===SIN_SABOR?' <span style="color:#c0392b">· elige el sabor</span>':''}</div><div class="chips" style="flex-wrap:wrap;overflow:visible;padding:2px 0">${SABORES.map(x=>`<button class="${x===u.s?'active':''}" onclick="cambiarSaborUnidad(${i},'${x}')">${x}</button>`).join('')}</div></div>`; }).join('');
+  return `<div style="margin:10px 0"><label>🌽 Sabor de cada tamal</label>${filas}${avisoSabor()}</div>`;
+}
+function saborItems(){ const m=new Map(); saborUnits.forEach(u=>{ const k=u.id+'|'+u.s; m.set(k,(m.get(k)||0)+1); });
+  return [...m].map(([k,q])=>{ const [id,l]=k.split('|'); const p=products.find(x=>x.id===id); if(!p) return null; return {id,nombre:p.nombre+(l===SIN_SABOR?' · sabor sin elegir':' · '+l.toLowerCase()),precio:p.precio,cantidad:q,sabor:l===SIN_SABOR?'':l}; }).filter(Boolean); }
 
 function agrupar(lista){
   const mapa=new Map();
@@ -778,7 +799,7 @@ function agrupar(lista){
 function celdaProd(p){
   if(!p) return '<div class="cel vacia">—</div>';
   if(esExtra(p)) return celdaExtra(p);
-  const lch=tieneLeche(p), qty=lch?lecheQty(p.id):(cart[p.id]||0), totQ=qty, out=p.stock<=0;
+  const lch=tieneLeche(p), qty=tieneSabor(p)?saborQty(p.id):lch?lecheQty(p.id):(cart[p.id]||0), totQ=qty, out=p.stock<=0;
   const nota = out ? 'Agotado' : (p.stock<=3 ? 'Últimas '+p.stock : (ADMIN_VISTA && p.stock<100 ? 'stock '+p.stock : ''));
   const ctrl = out ? '' : `<div class="qty"><button ${qty===0?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',-1)">–</button><span>${qty}</span><button ${totQ>=p.stock?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',1)">+</button></div>`;
   return `<div class="cel"><div class="precio">${fmt(p.precio)}</div>${ctrl}${nota?`<div class="nota">${nota}</div>`:''}</div>`;
@@ -823,9 +844,10 @@ function renderRegistrar(){
   const totalConDesc=Math.round(sub*(100-pct))/100;
   const chipD=(v,txt)=>`<button class="${descuentoPct===v?'active':''}" onclick="setDescuento(${v})">${txt}</button>`;
   const insTxt=i=>{ if(!i.insumoId) return ''; const n=insumos.find(x=>x.id===i.insumoId); return n?`<br><span class="small">↳ descuenta ${Math.round(i.insumoCant*i.cantidad*1000)/1000} ${esc(n.unidad)} de ${esc(n.nombre)}</span>`:''; };
-  const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${esc(i.nombre)}${insTxt(i)}</span><span>${empleadoMode&&i.key?`<input class="nospin" type="number" inputmode="decimal" min="0" step="any" style="width:64px;padding:4px 6px" data-k="${esc(i.key)}" value="${preciosEsp[i.key]!==undefined?preciosEsp[i.key]:i.precioLista}" oninput="precioEspInput(this.dataset.k,this.value)"> <span class="small">c/u (lista ${fmt(i.precioLista)})</span> `:fmt(i.precio*i.cantidad)}<button class="xbtn" title="Quitar" ${i.libre?`onclick="quitarLibre(${i.idx})"`:i.leche?`data-k="${esc(i.id+'|'+i.leche)}" onclick="quitarLeche(this.dataset.k)"`:i.opcion?`data-o="${esc(i.opcion)}" onclick="quitarExtra(this.dataset.o)"`:`onclick="quitarItem('${i.id}')"`}>✕</button></span></div>`).join('')}
+  const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${esc(i.nombre)}${insTxt(i)}</span><span>${empleadoMode&&i.key?`<input class="nospin" type="number" inputmode="decimal" min="0" step="any" style="width:64px;padding:4px 6px" data-k="${esc(i.key)}" value="${preciosEsp[i.key]!==undefined?preciosEsp[i.key]:i.precioLista}" oninput="precioEspInput(this.dataset.k,this.value)"> <span class="small">c/u (lista ${fmt(i.precioLista)})</span> `:fmt(i.precio*i.cantidad)}<button class="xbtn" title="Quitar" ${i.libre?`onclick="quitarLibre(${i.idx})"`:i.sabor?`data-k="${esc(i.id+'|'+i.sabor)}" onclick="quitarSabor(this.dataset.k)"`:i.leche?`data-k="${esc(i.id+'|'+i.leche)}" onclick="quitarLeche(this.dataset.k)"`:i.opcion?`data-o="${esc(i.opcion)}" onclick="quitarExtra(this.dataset.o)"`:`onclick="quitarItem('${i.id}')"`}>✕</button></span></div>`).join('')}
     <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
     ${selectorLeche()}
+    ${selectorSabor()}
     <div style="margin:10px 0"><label>Comentarios o restricciones del cliente (opcional)</label>
       <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea></div>
     ${pct===0?`<label style="margin-top:8px">Precio de empleado</label>
