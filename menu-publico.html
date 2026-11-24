@@ -73,11 +73,12 @@ async function loadProducts(){
   render();
 }
 function nuevaClave(){ return 'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,10); }
-function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveEnvio=null; const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
+function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveEnvio=null;
+  if(tieneLeche(p)){ const k=id+'|'+lecheDe(id), nx=(lecheCart[k]||0)+delta; if(nx<0||lecheQty(id)+delta>p.stock) return; if(nx) lecheCart[k]=nx; else delete lecheCart[k]; render(); return; } const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function addExtra(label,delta){ const p=products.find(esExtra); if(!p) return; claveEnvio=null; const next=Math.max(0,Math.min(20,(extras[label]||0)+delta)); if(next) extras[label]=next; else delete extras[label]; render(); }
-function cartItems(){ const base=Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); const pe=products.find(esExtra); const ex=pe?Object.entries(extras).map(([k,q])=>({id:pe.id,nombre:'Extra: '+k,precio:pe.precio,cantidad:q,opcion:k})):[]; return base.concat(ex); }
+function cartItems(){ const base=Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); const pe=products.find(esExtra); const ex=pe?Object.entries(extras).map(([k,q])=>({id:pe.id,nombre:'Extra: '+k,precio:pe.precio,cantidad:q,opcion:k})):[]; return base.concat(lecheItems(),ex); }
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
-function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0)+extrasCount(); }
+function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0)+Object.values(lecheCart).reduce((a,b)=>a+b,0)+extrasCount(); }
 
 let metodoPago = '', propinaCli = 0;
 function setPropinaCli(v){ propinaCli=Math.max(0,Math.min(9999,Number(v)||0)); claveEnvio=null; render(); }
@@ -88,9 +89,9 @@ async function enviarPedido(metodo){
   if(!claveEnvio) claveEnvio=nuevaClave();
   render();
   try{
-    const payload={items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||''})), cliente:clientLabel, comentarios:comentarios.trim(), metodo, propina:propinaCli, clave:claveEnvio};
+    const payload={items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||''})), cliente:clientLabel, comentarios:comentarios.trim(), metodo, propina:propinaCli, clave:claveEnvio};
     const res=await fetch(`${API_URL}?action=crearPedido&payload=${encodeURIComponent(JSON.stringify(payload))}`).then(r=>r.json());
-    if(res && res.ok){ cart={}; extras={}; extraAbierto=false; extraSub=''; propinaCli=0; comentarios=''; claveEnvio=null; numPedido=res.num; step=2; }
+    if(res && res.ok){ cart={}; lecheCart={}; extras={}; extraAbierto=false; extraSub=''; propinaCli=0; comentarios=''; claveEnvio=null; numPedido=res.num; step=2; }
     else alert('No pudimos registrar tu pedido'+(res&&res.error?': '+res.error:'')+'. Intenta de nuevo.');
   }catch(e){
     alert('No hay conexión. Revisa tu internet e intenta de nuevo: tu pedido no se duplicará.');
@@ -101,7 +102,7 @@ const ADMIN_VISTA=false;
 
 // ---- EXTRAS: el producto "Extra" despliega botones con todos los tipos disponibles ----
 const EXTRAS=[
-  {g:'☕ Café y leche', o:['Shot de café','Leche de soya']},
+  {g:'☕ Café', o:['Shot de café']},
   {g:'🫧 Perlas y tapioca', o:['Tapioca','Perla explosiva blueberry','Perla explosiva manzana verde']},
   {g:'🍯 Jarabes (sabor)', pre:'Jarabe de ', o:['Vainilla','Caramelo','Avellana','Fresa','Mango','Menta','Mora azul','Manzana verde','Limón','Maracuyá','Durazno','Chocolate','Crema irlandesa','Carajillo','Rompope','Cajeta']}
 ];
@@ -120,7 +121,30 @@ function celdaExtra(p){
   const n=extrasCount();
   return `<div class="cel"><div class="precio">${fmt(p.precio)} c/u</div>${n>0?`<div class="nota">${n} elegido(s)</div>`:''}</div>`;
 }
-function parseTam(nombre){ const m=nombre.match(/^(.*) \((Mediano|Grande)\)$/); return m?{base:m[1],tam:m[2]}:{base:nombre,tam:null}; }
+function parseTam(nombre){ const m=nombre.match(/^(.*) \((Mediano|Chico|Grande)\)$/); return m?{base:m[1],tam:(m[2]==='Chico'?'Mediano':m[2])}:{base:nombre,tam:null}; }
+function tieneLeche(p){
+  if(!p) return false; const c=String(p.categoria||''), n=String(p.nombre||'');
+  if(/^extra/i.test(n)) return false;
+  if(/^latte/i.test(c) || /^bubble/i.test(c)) return true;
+  if(/^frapp/i.test(c)) return !/^(Mango|Fresa|Chamoyada)\b/i.test(n);
+  if(/^caf/i.test(c)) return /capuccino|capuchino|moka|macchiato|latte/i.test(n);
+  return false;
+}
+const LECHES=['Entera','Deslactosada','Soya'];
+let lecheCart={}, lecheSel={};   // lecheCart: 'id|Leche' -> cantidad · lecheSel: id -> leche marcada en los botones
+function extraPrecio(){ const e=products.find(esExtra); return e?e.precio:0; }
+function lecheDe(id){ return lecheSel[id]||'Entera'; }
+function lecheQty(id){ return LECHES.reduce((s,l)=>s+(lecheCart[id+'|'+l]||0),0); }
+function setLeche(ids,l){ ids.split(',').forEach(id=>{ lecheSel[id]=l; }); render(); }
+function quitarLeche(k){ delete lecheCart[k]; claveEnvio=null; render(); }
+function lecheItems(){ return Object.entries(lecheCart).map(([k,q])=>{ const [id,l]=k.split('|'); const p=products.find(x=>x.id===id); if(!p) return null; const sx=(l==='Soya')?extraPrecio():0; return {id,nombre:p.nombre+' · Leche '+l.toLowerCase()+(sx?' (+$'+sx+')':''),precio:p.precio+sx,cantidad:q,leche:l}; }).filter(Boolean); }
+function filaLeche(a,b){
+  const ps=[a,b].filter(Boolean); if(!ps.length||!tieneLeche(ps[0])) return '';
+  const ids=ps.map(p=>p.id).join(','), sel=lecheDe(ps[0].id);
+  const res=ps.map(p=>{ const t=parseTam(p.nombre).tam; const det=LECHES.filter(l=>lecheCart[p.id+'|'+l]).map(l=>lecheCart[p.id+'|'+l]+' '+l.toLowerCase()); return det.length?(t?t+': ':'')+det.join(', '):''; }).filter(Boolean).join(' · ');
+  return `<div class="lechefila"><div class="chips" style="flex-wrap:wrap;overflow:visible;padding:2px 0 4px;align-items:center"><span class="small">🥛 Leche:</span>${LECHES.map(l=>`<button class="${l===sel?'active':''}" onclick="setLeche('${ids}','${l}')">${l}${l==='Soya'&&extraPrecio()?' +$'+extraPrecio():''}</button>`).join('')}</div>${res?`<div class="small" style="padding:0 0 6px">Elegido → ${esc(res)}</div>`:''}</div>`;
+}
+
 function agrupar(lista){
   const mapa=new Map();
   lista.forEach(p=>{
@@ -133,9 +157,9 @@ function agrupar(lista){
 function celdaProd(p){
   if(!p) return '<div class="cel vacia">—</div>';
   if(esExtra(p)) return celdaExtra(p);
-  const qty=cart[p.id]||0, out=p.stock<=0;
+  const lch=tieneLeche(p), qty=lch?(lecheCart[p.id+'|'+lecheDe(p.id)]||0):(cart[p.id]||0), totQ=lch?lecheQty(p.id):qty, out=p.stock<=0;
   const nota = out ? 'Agotado' : (p.stock<=3 ? 'Últimas '+p.stock : (ADMIN_VISTA && p.stock<100 ? 'stock '+p.stock : ''));
-  const ctrl = out ? '' : `<div class="qty"><button ${qty===0?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',-1)">–</button><span>${qty}</span><button ${qty>=p.stock?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',1)">+</button></div>`;
+  const ctrl = out ? '' : `<div class="qty"><button ${qty===0?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',-1)">–</button><span>${qty}</span><button ${totQ>=p.stock?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',1)">+</button></div>`;
   return `<div class="cel"><div class="precio">${fmt(p.precio)}</div>${ctrl}${nota?`<div class="nota">${nota}</div>`:''}</div>`;
 }
 function bloqueCategoria(lista){
@@ -145,10 +169,10 @@ function bloqueCategoria(lista){
   grupos.forEach(g=>{
     const solo = g.unico && !g.Mediano && !g.Grande;
     if(solo){
-      h+=`<div class="fila ${conTam?'':'uno'}"><div class="nom">${esc(g.base)}</div>${conTam?`<div class="span2">${celdaProd(g.unico)}</div>`:celdaProd(g.unico)}</div>`;
+      h+=`<div class="fila ${conTam?'':'uno'}"><div class="nom">${esc(g.base)}</div>${conTam?`<div class="span2">${celdaProd(g.unico)}</div>`:celdaProd(g.unico)}</div>`+filaLeche(g.unico,null);
       if(esExtra(g.unico)) h+=panelExtras();
     } else {
-      h+=`<div class="fila"><div class="nom">${esc(g.base)}</div>${celdaProd(g.Mediano)}${celdaProd(g.Grande)}</div>`;
+      h+=`<div class="fila"><div class="nom">${esc(g.base)}</div>${celdaProd(g.Mediano)}${celdaProd(g.Grande)}</div>`+filaLeche(g.Mediano,g.Grande);
     }
   });
   return h;
@@ -209,7 +233,7 @@ function renderDone(){
     <h2 style="margin:0 0 4px">¡Pedido registrado! 🎉</h2>
     ${numPedido?`<div style="font-size:2rem;font-weight:bold;color:var(--accent);margin:6px 0 10px">#${numPedido}</div>`:''}
     <p class="small">Ahora ${lugar}. En cuanto confirmen tu pago, tu pedido pasa a preparación. Te llamaremos en la barra cuando esté listo.</p>
-    <button class="secondary" onclick="cart={};extras={};step=0;loadProducts()">Hacer otro pedido</button>
+    <button class="secondary" onclick="cart={};lecheCart={};extras={};step=0;loadProducts()">Hacer otro pedido</button>
   </div>`;
 }
 function render(){
