@@ -89,7 +89,7 @@ const LOGO_DATAURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYA
 <script>
 document.getElementById('watermark').style.backgroundImage = `url("${LOGO_DATAURI}")`;
 let products=[], orders=[], cart={}, clientLabel='', tab='pend';
-let mixtoAbierto=false, mixtoEf='', recibidoEf='';
+let mixtoAbierto=false, mixtoEf='', recibidoEf='', metodoReg='', faltaMetodoReg=false;
 let empleadoMode=false, empleadoNombre='', preciosEsp={};
 let propinaReg=0, libres=[], libreAbierto=false, lbNombre='', lbPrecio='', lbCant='1', lbGrupo='Bebidas', lbIns='', lbInsCant='';
 let busquedaReg='', catSelReg='', descuentoPct=0, motivoDesc='', comentariosReg='', registrando=false, claveReg=null;
@@ -375,6 +375,7 @@ function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0);
 
 async function registrarPedidoManual(metodo){
   const items=cartItems(); if(items.length===0 || registrando) return;
+  if(!metodo){ faltaMetodoReg=true; render(); return; }
   if(descuentoPct>0 && !motivoDesc.trim()){ alert('Escribe el motivo del descuento o cortesía.'); return; }
   if(items.some(i=>i.especial) && !empleadoNombre.trim()){ alert('Escribe el nombre del empleado para aplicar el precio especial.'); return; }
   if(metodo==='mixto'){ const ef=Number(mixtoEf), cobrar=cobrarTotal(); if(!(ef>0 && ef<cobrar)){ alert('En pago mixto escribe cuánto se recibió en efectivo: debe ser mayor a 0 y menor al total a cobrar ('+fmt(cobrar)+').'); return; } }
@@ -382,7 +383,7 @@ async function registrarPedidoManual(metodo){
   if(!claveReg) claveReg=nuevaClave();
   try{
     const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>i.libre?{id:'libre',libre:true,nombre:i.nombre,precio:i.precio,grupo:i.grupo,cantidad:i.cantidad,insumoId:i.insumoId||'',insumoCant:i.insumoCant||0}:(i.especial?{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||'',precioEspecial:i.precio}:{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, empleado:empleadoNombre.trim(), propina:(descuentoPct===100?0:propinaReg), pagoEfectivo:(metodo==='mixto'?Number(mixtoEf):0)});
-    if(res && res.ok){ cart={}; lecheCart={}; extras={}; libres=[]; mixtoAbierto=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
+    if(res && res.ok){ cart={}; lecheCart={}; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
     await refrescarRapido();
   } finally { registrando=false; }
 }
@@ -418,6 +419,7 @@ function cambioPend(id){
   const o=orders.find(x=>x.id===id), r=document.getElementById('rec-'+id), p=document.getElementById('prop-'+id), e=document.getElementById('camb-'+id);
   if(!o||!r||!e) return; e.innerHTML=cambioHTML(r2(o.total+(Number(p&&p.value)||0)),r.value);
 }
+function setMetodoReg(m){ metodoReg=m; faltaMetodoReg=false; claveReg=null; render(); }
 function actualizarCambio(){ const e=document.getElementById('cambioTxt'); if(e) e.innerHTML=cambioHTML(cobrarTotal(),recibidoEf); }
 function recibidoInput(v){ recibidoEf=v; actualizarCambio(); }
 function setRecibido(v){ recibidoEf=(v===null?String(cobrarTotal()):String(v)); render(); }
@@ -454,7 +456,7 @@ function celdaExtra(p){
 function quitarItem(id){ delete cart[id]; claveReg=null; render(); }
 function vaciarPedido(){
   if(!confirm('¿Vaciar el pedido actual?')) return;
-  cart={}; lecheCart={}; extras={}; libres=[]; mixtoAbierto=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
+  cart={}; lecheCart={}; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
 }
 const aprobando=new Set();
 async function aprobar(id){
@@ -822,34 +824,36 @@ function renderRegistrar(){
   const chipD=(v,txt)=>`<button class="${descuentoPct===v?'active':''}" onclick="setDescuento(${v})">${txt}</button>`;
   const insTxt=i=>{ if(!i.insumoId) return ''; const n=insumos.find(x=>x.id===i.insumoId); return n?`<br><span class="small">↳ descuenta ${Math.round(i.insumoCant*i.cantidad*1000)/1000} ${esc(n.unidad)} de ${esc(n.nombre)}</span>`:''; };
   const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${esc(i.nombre)}${insTxt(i)}</span><span>${empleadoMode&&i.key?`<input class="nospin" type="number" inputmode="decimal" min="0" step="any" style="width:64px;padding:4px 6px" data-k="${esc(i.key)}" value="${preciosEsp[i.key]!==undefined?preciosEsp[i.key]:i.precioLista}" oninput="precioEspInput(this.dataset.k,this.value)"> <span class="small">c/u (lista ${fmt(i.precioLista)})</span> `:fmt(i.precio*i.cantidad)}<button class="xbtn" title="Quitar" ${i.libre?`onclick="quitarLibre(${i.idx})"`:i.leche?`data-k="${esc(i.id+'|'+i.leche)}" onclick="quitarLeche(this.dataset.k)"`:i.opcion?`data-o="${esc(i.opcion)}" onclick="quitarExtra(this.dataset.o)"`:`onclick="quitarItem('${i.id}')"`}>✕</button></span></div>`).join('')}
-    ${pct>0?`<div class="orderline small"><span>Subtotal</span><span>${fmt(sub)}</span></div><div class="orderline small"><span>${pct===100?'Cortesía':'Descuento '+pct+'%'}</span><span>−${fmt(sub-totalConDesc)}</span></div>`:''}
-    <div class="orderline" style="font-weight:bold;color:var(--accent)"><span>Total</span><span id="totTxt">${fmt(totalConDesc)}</span></div>
-    ${pct===100?'':`<label style="margin-top:8px">Propina (opcional)</label>
-    <div class="chips" style="padding-bottom:4px">${[0,10,20,50].map(v=>`<button class="${propinaReg===v?'active':''}" onclick="setPropina(${v})">${v===0?'Sin propina':'$'+v}</button>`).join('')}<input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(propinaReg)?'':propinaReg}" oninput="propinaInput(this.value)"></div>
-    <div class="orderline small"><span>Propina</span><span id="propTxt">${fmt(propinaReg)}</span></div>
-    <div class="orderline" style="font-weight:bold"><span>A cobrar al cliente</span><span id="cobrarTxt">${fmt(Math.round((totalConDesc+propinaReg)*100)/100)}</span></div>`}
+    <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
+    ${selectorLeche()}
+    <div style="margin:10px 0"><label>Comentarios o restricciones del cliente (opcional)</label>
+      <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea></div>
     ${pct===0?`<label style="margin-top:8px">Precio de empleado</label>
     <div class="chips" style="padding-bottom:4px"><button class="${empleadoMode?'active':''}" onclick="toggleEmpleado()">👤 ${empleadoMode?'Activado (toca para quitar)':'Activar precio especial'}</button></div>
     ${empleadoMode?`<div class="small" style="margin-bottom:4px">Escribe en cada artículo el precio que se le cobra al empleado (nunca mayor al de lista).</div><div style="margin:4px 0"><label>Empleado (obligatorio)</label><input maxlength="60" placeholder="Nombre del empleado" value="${esc(empleadoNombre)}" oninput="empleadoNombre=this.value"></div>`:''}`:''}
     ${empleadoMode?'':`<label style="margin-top:8px">Descuento</label>
     <div class="chips" style="padding-bottom:4px">${chipD(0,'Ninguno')}${chipD(10,'10%')}${chipD(15,'15%')}${chipD(100,'🎁 Cortesía')}</div>
     ${pct>0?`<div style="margin:6px 0"><label>Motivo (obligatorio)</label><input value="${esc(motivoDesc)}" placeholder="Ej: cumpleaños, error en el servicio" oninput="motivoDesc=this.value"></div>`:''}`}
-    <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
-    ${selectorLeche()}
-    <div style="margin:10px 0"><label>Comentarios o restricciones del cliente (opcional)</label>
-      <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea></div>
-    ${pct===100?'':(()=>{ const tc=r2(totalConDesc+propinaReg); return `<div class="card small" style="background:var(--bg2);margin:8px 0"><label>💵 Calculadora de cambio (solo para cobrar, no se guarda)</label>
-      <div class="chips" style="padding:4px 0"><button onclick="setRecibido(null)">Exacto</button>${billetesSug(tc).map(v=>`<button class="${Number(recibidoEf)===v?'active':''}" onclick="setRecibido(${v})">$${v}</button>`).join('')}</div>
-      <input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otro monto recibido $" value="${esc(recibidoEf)}" oninput="recibidoInput(this.value)">
-      <div id="cambioTxt" style="margin-top:6px">${cambioHTML(tc,recibidoEf)}</div></div>`; })()}
-    <div style="display:flex;gap:8px">${pct===100
+    ${pct===100?'':(()=>{ const tc=r2(totalConDesc+propinaReg);
+      const mchip=(m,t)=>`<button class="${metodoReg===m?'active':''}" onclick="setMetodoReg('${m}')">${t}</button>`;
+      const det=metodoReg==='efectivo'?`<div class="card small" style="background:var(--bg2);margin:6px 0"><label>💵 Calculadora de cambio (solo para cobrar, no se guarda)</label>
+        <div class="chips" style="padding:4px 0"><button onclick="setRecibido(null)">Exacto</button>${billetesSug(tc).map(v=>`<button class="${Number(recibidoEf)===v?'active':''}" onclick="setRecibido(${v})">$${v}</button>`).join('')}</div>
+        <input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otro monto recibido $" value="${esc(recibidoEf)}" oninput="recibidoInput(this.value)">
+        <div id="cambioTxt" style="margin-top:6px">${cambioHTML(tc,recibidoEf)}</div></div>`
+        :metodoReg==='mixto'?`<div class="card small" style="background:var(--bg2);margin:6px 0"><div class="small" style="margin-bottom:4px">El cliente paga una parte en efectivo y el resto con tarjeta.</div>
+        <label>Efectivo recibido $</label><input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Ej: 50" value="${esc(mixtoEf)}" oninput="mixtoInput(this.value)">
+        <div class="orderline" style="margin-top:6px"><span>💳 Resto en tarjeta</span><strong id="mixtoTj">${fmt(Math.max(0,r2(tc-(Number(mixtoEf)||0))))}</strong></div></div>`:'';
+      return `<label style="margin-top:8px">¿Cómo paga?</label>
+      <div class="chips" style="padding-bottom:4px">${mchip('efectivo','💵 Efectivo')}${mchip('tarjeta','💳 Tarjeta')}${mchip('mixto','💵💳 Mixto')}</div>
+      ${faltaMetodoReg&&!metodoReg?'<div class="small" style="color:#c0392b;font-weight:bold">Elige cómo paga el cliente.</div>':''}${det}
+      <label style="margin-top:8px">Propina (opcional)</label>
+      <div class="chips" style="padding-bottom:4px">${[0,10,20,50].map(v=>`<button class="${propinaReg===v?'active':''}" onclick="setPropina(${v})">${v===0?'Sin propina':'$'+v}</button>`).join('')}<input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(propinaReg)?'':propinaReg}" oninput="propinaInput(this.value)"></div>`; })()}
+    ${pct>0?`<div class="orderline small"><span>Subtotal</span><span>${fmt(sub)}</span></div><div class="orderline small"><span>${pct===100?'Cortesía':'Descuento '+pct+'%'}</span><span>−${fmt(sub-totalConDesc)}</span></div>`:''}
+    ${pct===100?'':`<div class="orderline small"><span>Propina</span><span id="propTxt">${fmt(propinaReg)}</span></div>`}
+    <div class="orderline" style="font-weight:bold;color:var(--accent)"><span>${pct===100?'Total':'Total a cobrar'}</span><span id="cobrarTxt">${fmt(Math.round((totalConDesc+(pct===100?0:propinaReg))*100)/100)}</span></div>
+    <div style="display:flex;gap:8px;margin-top:8px">${pct===100
       ? `<button class="primary" style="flex:1" onclick="registrarPedidoManual('cortesia')">🎁 Registrar cortesía</button>`
-      : `<button class="primary" style="flex:1" onclick="registrarPedidoManual('efectivo')">💵 Efectivo</button><button class="primary" style="flex:1" onclick="registrarPedidoManual('tarjeta')">💳 Tarjeta</button>`}</div>
-    ${pct===100?'':`<button class="secondary" style="width:100%;margin-top:6px" onclick="mixtoAbierto=!mixtoAbierto;render()">💵💳 Pago mixto ${mixtoAbierto?'▴':'▾'}</button>
-    ${mixtoAbierto?`<div class="card small" style="background:var(--bg2);margin-top:6px"><div class="small" style="margin-bottom:4px">Cuando el cliente paga una parte en efectivo y el resto con tarjeta.</div>
-      <label>Efectivo recibido $</label><input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Ej: 50" value="${esc(mixtoEf)}" oninput="mixtoInput(this.value)">
-      <div class="orderline" style="margin-top:6px"><span>💳 Resto en tarjeta</span><strong id="mixtoTj">${fmt(Math.max(0,r2(totalConDesc+propinaReg-(Number(mixtoEf)||0))))}</strong></div>
-      <button class="primary" style="width:100%" onclick="registrarPedidoManual('mixto')">Registrar pago mixto</button></div>`:''}`}
+      : `<button class="primary" style="flex:1" onclick="registrarPedidoManual(metodoReg)">✅ Registrar venta</button>`}</div>
     <button class="secondary" style="width:100%;margin-top:8px" onclick="vaciarPedido()">🗑️ Vaciar pedido</button></div>`:'';
   const gchip=g=>`<button class="${lbGrupo===g?'active':''}" onclick="lbGrupo='${g}';render()">${g}</button>`;
   const libreCard=`<div class="card" style="padding:10px"><div class="orderline" style="align-items:center"><strong>🧾 Artículo fuera del menú</strong><a href="#" onclick="libreAbierto=!libreAbierto;render();return false">${libreAbierto?'Cerrar ▴':'Agregar ▾'}</a></div>
