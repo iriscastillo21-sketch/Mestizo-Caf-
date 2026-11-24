@@ -460,18 +460,64 @@ const aprobando=new Set();
 async function aprobar(id){
   if(aprobando.has(id)) return;
   aprobando.add(id);
-  const pi=document.getElementById('prop-'+id);
-  const propina=pi?Number(pi.value)||0:0;
   const o=orders.find(x=>x.id===id);
-  const mx=document.getElementById('mix-'+id), mixto=mx?Number(mx.value)||0:0;
-  if(mixto>0 && o && !(mixto<r2(o.total+propina))){ alert('En pago mixto el efectivo debe ser menor al total a cobrar ('+fmt(r2(o.total+propina))+').'); aprobando.delete(id); return; }
-  const prev=o?{estado:o.estado,propina:o.propina,metodo:o.metodo,pagoEfectivo:o.pagoEfectivo}:null;
-  if(o){ o.estado='aprobado'; o.propina=propina; if(mixto>0){ o.metodo='mixto'; o.pagoEfectivo=mixto; } render(); }      // se ve aprobado al instante; el servidor confirma en segundo plano
+  const prev=o?{estado:o.estado,porCobrar:o.porCobrar}:null;
+  if(o){ o.estado='aprobado'; o.porCobrar=true; render(); }      // pasa a preparación al instante; el servidor confirma en segundo plano
   try{
-    const r=await api('aprobarPedido',mixto>0?{id,propina,metodo:'mixto',pagoEfectivo:mixto}:{id,propina});
-    if((!r||r.error) && o && prev){ o.estado=prev.estado; o.propina=prev.propina; o.metodo=prev.metodo; o.pagoEfectivo=prev.pagoEfectivo; }
+    const r=await api('aprobarPedido',{id});
+    if((!r||r.error) && o && prev){ o.estado=prev.estado; o.porCobrar=prev.porCobrar; }
   } finally { aprobando.delete(id); }
   refrescarRapido();
+}
+// ---- Cobro: paso separado de la preparación (el cliente paga en el mostrador al recoger) ----
+const cobroSt={}, cobrando=new Set();
+function cobroDe(o){ return cobroSt[o.id]||(cobroSt[o.id]={metodo:(o.metodo==='efectivo'||o.metodo==='tarjeta')?o.metodo:'efectivo', prop:o.propina>0?String(o.propina):'', rec:'', mix:''}); }
+function cobroTotal(o){ return r2(o.total+(Number(cobroDe(o).prop)||0)); }
+function cobroMetodo(id,m){ const o=orders.find(x=>x.id===id); if(!o) return; cobroDe(o).metodo=m; render(); }
+function cobroSet(id,campo,v){ const o=orders.find(x=>x.id===id); if(!o) return; cobroDe(o)[campo]=String(v); render(); }
+function cobroInput(id,campo,v){ const o=orders.find(x=>x.id===id); if(!o) return; cobroDe(o)[campo]=v; cobroLive(id); }
+function cobroLive(id){
+  const o=orders.find(x=>x.id===id); if(!o) return; const c=cobroDe(o), t=cobroTotal(o);
+  const set=(k,h)=>{ const e=document.getElementById(k+id); if(e) e.innerHTML=h; };
+  set('cobT-',fmt(t)); set('cobB-','💰 Cobrar '+fmt(t));
+  set('cobCamb-',cambioHTML(t,c.rec)); set('cobMx-',fmt(Math.max(0,r2(t-(Number(c.mix)||0)))));
+}
+function cobroHTML(o){
+  if(!o.porCobrar || !['aprobado','listo','entregado'].includes(o.estado)) return '';
+  const c=cobroDe(o), t=cobroTotal(o), id=o.id, esc_=esc(id);
+  const chip=(m,txt)=>`<button class="${c.metodo===m?'active':''}" onclick="cobroMetodo('${id}','${m}')">${txt}</button>`;
+  const propChips=[0,10,20,50].map(v=>`<button class="${(Number(c.prop)||0)===v?'active':''}" onclick="cobroSet('${id}','prop','${v||''}')">${v===0?'Sin propina':'$'+v}</button>`).join('');
+  const efectivo=c.metodo==='efectivo'?`<label style="margin-top:6px">Efectivo recibido (para calcular el cambio)</label>
+      <div class="chips" style="flex-wrap:wrap;overflow:visible;padding:4px 0"><button onclick="cobroSet('${id}','rec','${t}')">Exacto</button>${billetesSug(t).map(v=>`<button class="${Number(c.rec)===v?'active':''}" onclick="cobroSet('${id}','rec','${v}')">$${v}</button>`).join('')}</div>
+      <input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otro monto recibido $" value="${esc(c.rec)}" oninput="cobroInput('${id}','rec',this.value)">
+      <div id="cobCamb-${id}" style="margin-top:6px">${cambioHTML(t,c.rec)}</div>`:'';
+  const mixto=c.metodo==='mixto'?`<label style="margin-top:6px">Efectivo recibido $ (el resto es tarjeta)</label>
+      <input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Ej: 50" value="${esc(c.mix)}" oninput="cobroInput('${id}','mix',this.value)">
+      <div class="orderline" style="margin-top:6px"><span>💳 Resto en tarjeta</span><strong id="cobMx-${id}">${fmt(Math.max(0,r2(t-(Number(c.mix)||0))))}</strong></div>`:'';
+  return `<div class="card small" style="background:var(--bg2);margin-top:8px;border:1px solid #e0a800"><strong>💰 Por cobrar</strong> <span class="small">· el cliente pagará: ${metodoTxt(o)||'sin indicar'}</span>
+    <label style="margin-top:6px">Método de pago</label>
+    <div class="chips" style="padding:4px 0">${chip('efectivo','💵 Efectivo')}${chip('tarjeta','💳 Tarjeta')}${chip('mixto','💵💳 Mixto')}</div>
+    <label>Propina</label>
+    <div class="chips" style="padding:4px 0">${propChips}<input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(Number(c.prop)||0)?'':esc(c.prop)}" oninput="cobroInput('${id}','prop',this.value)"></div>
+    ${efectivo}${mixto}
+    <div class="orderline" style="font-weight:bold;margin-top:6px"><span>Total por cobrar (con propina)</span><span id="cobT-${id}">${fmt(t)}</span></div>
+    <button class="primary" style="width:100%;margin-top:6px" ${cobrando.has(id)?'disabled':''} onclick="cobrarPed('${id}')"><span id="cobB-${id}">💰 Cobrar ${fmt(t)}</span></button></div>`;
+}
+async function cobrarPed(id){
+  const o=orders.find(x=>x.id===id); if(!o || cobrando.has(id)) return;
+  const c=cobroDe(o), prop=Math.max(0,Math.min(9999,Number(c.prop)||0)), t=r2(o.total+prop);
+  let mix=0;
+  if(c.metodo==='mixto'){ mix=Number(c.mix)||0; if(!(mix>0 && mix<t)){ alert('En pago mixto escribe cuánto se recibió en efectivo: debe ser mayor a 0 y menor al total a cobrar ('+fmt(t)+').'); return; } }
+  if(c.metodo==='efectivo' && Number(c.rec)>0 && Number(c.rec)<t){ if(!confirm('El efectivo recibido ('+fmt(Number(c.rec))+') es menor al total ('+fmt(t)+'). ¿Cobrar de todos modos?')) return; }
+  cobrando.add(id);
+  const prev={porCobrar:o.porCobrar,metodo:o.metodo,propina:o.propina,pagoEfectivo:o.pagoEfectivo};
+  o.porCobrar=false; o.metodo=c.metodo; o.propina=prop; o.pagoEfectivo=mix; render();
+  try{
+    const r=await api('cobrarPedido',{id,metodo:c.metodo,propina:prop,pagoEfectivo:mix});
+    if(!r||r.error){ Object.assign(o,prev); }
+    else delete cobroSt[id];
+  } finally { cobrando.delete(id); }
+  render(); refrescarRapido();
 }
 async function marcar(id, estado){
   const o=orders.find(x=>x.id===id), prev=o&&o.estado;
@@ -552,16 +598,14 @@ function botonesCancelacion(o){
 
 function renderPendientes(){
   const pend = orders.filter(o=>o.estado==='pendiente_pago');
-  if(pend.length===0) return '<p class="empty">No hay pedidos esperando validación de pago.</p>';
+  if(pend.length===0) return '<p class="empty">No hay pedidos nuevos por aceptar.</p>';
   return pend.map(o=>`<div class="card">
     <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${metodoTxt(o)||'pendiente'}</span></div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
-    <div style="margin-top:8px"><label>Propina${o.propina>0?' (la indicó el cliente: confirma o corrige)':' (opcional)'}</label><input id="prop-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="$ 0" value="${o.propina>0?o.propina:''}" oninput="cambioPend('${o.id}')"></div>
-    <div style="margin-top:8px"><label>💵 Calculadora de cambio (opcional): cuánto entregó el cliente $</label><input id="rec-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="Ej: 200" oninput="cambioPend('${o.id}')"><div id="camb-${o.id}" style="margin-top:4px"></div></div>
-    <div style="margin-top:8px"><label>Pago mixto (opcional): efectivo recibido $ — el resto es tarjeta</label><input id="mix-${o.id}" class="nospin" type="number" inputmode="decimal" min="0" placeholder="Solo si pagó parte en efectivo y parte con tarjeta"></div>
-    <button class="primary" style="margin-top:8px" onclick="aprobar('${o.id}')">✅ Validé el pago, aprobar</button>
+    ${o.propina>0?`<div class="small" style="margin-top:6px">🙏 Propina que indicó el cliente: ${fmt(o.propina)} (se confirma al cobrar)</div>`:''}
+    <button class="primary" style="margin-top:8px" onclick="aprobar('${o.id}')">✅ Aceptar y preparar</button><div class="small" style="margin-top:4px">El cobro se hace después, cuando el cliente pase por su pedido.</div>
     ${botonesCancelacion(o)}
   </div>`).join('');
 }
@@ -571,16 +615,19 @@ function renderHoy(){
   const list = orders.filter(o=>estadosVisibles.includes(o.estado) && todayStr(o.fecha)===today);
   if(list.length===0) return '<p class="empty">Sin pedidos aprobados hoy todavía.</p>';
   const etiquetas = {aprobado:'aprobado',listo:'listo',entregado:'entregado',cancelacion_solicitada:'cancelación solicitada',cancelado:'cancelado'};
-  return list.map(o=>`<div class="card">
-    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${etiquetas[o.estado]}</span></div>
+  const xCobrar=list.filter(o=>o.porCobrar && ['aprobado','listo','entregado'].includes(o.estado));
+  const banner=xCobrar.length?`<div class="card small" style="border:1px solid #e0a800"><strong>💰 Por cobrar: ${xCobrar.length} pedido(s) · ${fmt(xCobrar.reduce((t,o)=>t+o.total,0))}</strong> <span class="small">(aún no cuentan en ventas ni en caja)</span></div>`:'';
+  return banner+list.map(o=>`<div class="card">
+    <div class="orderline"><strong>#${o.num} · ${esc(o.cliente||'')}</strong><span class="pill ${o.estado}">${etiquetas[o.estado]}${o.porCobrar&&o.estado!=='cancelado'&&o.estado!=='cancelacion_solicitada'?' · por cobrar':''}</span></div>
     ${o.items.map(i=>`<div class="orderline small"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
     <div class="orderline" style="font-weight:bold"><span>Total</span><span>${fmt(o.total)}</span></div>
     ${comentarioHTML(o)}
+    ${cobroHTML(o)}
     ${o.estado==='cancelacion_solicitada'?`<div class="card small" style="background:var(--bg2);margin-top:8px">⏳ Esperando que el administrador apruebe la cancelación.${o.motivoCancelacion?' Motivo: '+esc(o.motivoCancelacion):''}</div>`:''}
     ${o.estado==='cancelado'&&o.motivoCancelacion?`<div class="card small" style="background:var(--bg2);margin-top:8px">Motivo de cancelación: ${esc(o.motivoCancelacion)}${o.canceladoPor?' · Canceló: '+(o.canceladoPor==='admin'?'Administrador':'Staff'):''}${o.fechaCancelacion?' · '+cuandoTxt(o.fechaCancelacion):''}</div>`:''}
     <div style="margin-top:8px;display:flex;gap:8px">
       ${o.estado==='aprobado'?`<button class="primary" onclick="marcar('${o.id}','listo')">🔔 Marcar listo</button>`:''}
-      ${o.estado==='listo'?`<button class="primary" onclick="marcar('${o.id}','entregado')">📣 Entregado</button>`:''}
+      ${o.estado==='listo'&&!o.porCobrar?`<button class="primary" onclick="marcar('${o.id}','entregado')">📣 Entregado</button>`:''}${o.estado==='listo'&&o.porCobrar?`<span class="small" style="align-self:center">Cobra el pedido para poder entregarlo.</span>`:''}
     </div>
     ${botonesCancelacion(o)}
     </div>`).join('');
@@ -655,10 +702,10 @@ function renderHistorial(){
   const vendidos = ['aprobado','listo','entregado'];
   const list = enRango.filter(o=>
     histEstado==='todos' ? true :
-    histEstado==='ventas' ? vendidos.includes(o.estado) :
+    histEstado==='ventas' ? esVenta(o) :
     histEstado==='cancelados' ? o.estado==='cancelado' :
     histEstado==='pendientes' ? ['pendiente_pago','cancelacion_solicitada'].includes(o.estado) : true);
-  const ventas = enRango.filter(o=>vendidos.includes(o.estado));
+  const ventas = enRango.filter(o=>esVenta(o));
   const total = ventas.reduce((s,o)=>s+o.total,0);
   const efectivo = ventas.reduce((s,o)=>s+partesPago(o).efV,0);
   const tarjeta = ventas.reduce((s,o)=>s+partesPago(o).tjV,0);
@@ -835,9 +882,9 @@ function desgloseTxt(o){ return Object.keys(o||{}).sort((a,b)=>b-a).map(k=>`${o[
 function esperadoCaja(dia){
   const ms=caja.filter(m=>fechaLocal(m.fecha)===dia && !m.anulado);
   const suma=t=>ms.filter(m=>m.tipo===t).reduce((a,m)=>a+m.monto,0);
-  const ventas=r2(orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+partesPago(o).efV,0));
+  const ventas=r2(orders.filter(o=>esVenta(o) && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+partesPago(o).efV,0));
   const fondo=FONDO_CAJA, ent=suma('entrada'), sal=suma('salida');   // los movimientos 'fondo' viejos ya no cuentan
-  const prop=r2(orders.filter(o=>['aprobado','listo','entregado'].includes(o.estado) && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+partesPago(o).efP,0));   // propinas en efectivo: entran al cajón
+  const prop=r2(orders.filter(o=>esVenta(o) && fechaLocal(o.fecha)===dia).reduce((a,o)=>a+partesPago(o).efP,0));   // propinas en efectivo: entran al cajón
   const arqs=ms.filter(m=>m.tipo==='arqueo');
   return { fondo, ent, sal, ventas, prop, esperado:Math.round((fondo+ventas+prop+ent-sal)*100)/100, arqueo:arqs.length?arqs[0]:null };
 }
@@ -1083,9 +1130,11 @@ function repPreset(tipo){
   render();
 }
 const VENDIDOS=['aprobado','listo','entregado'];
+// Una venta cuenta en reportes y caja solo cuando ya se cobró (los pedidos del menú se cobran al recoger)
+function esVenta(o){ return VENDIDOS.includes(o.estado) && !o.porCobrar; }
 // Cierre de un día: ventas + caja (efectivo de ventas, entradas, salidas, arqueo)
 function cierreDia(dia){
-  const v=orders.filter(o=>VENDIDOS.includes(o.estado) && fechaLocal(o.fecha)===dia);
+  const v=orders.filter(o=>esVenta(o) && fechaLocal(o.fecha)===dia);
   const R=esperadoCaja(dia);
   const total=v.reduce((t,o)=>t+o.total,0);
   const tj=r2(v.reduce((t,o)=>t+partesPago(o).tjV,0));
@@ -1158,7 +1207,7 @@ function renderReporte(){
 function renderResumen(){
   const hoy=new Date().toDateString();
   const delDia=orders.filter(o=>todayStr(o.fecha)===hoy);
-  const cobrados=delDia.filter(o=>['aprobado','listo','entregado'].includes(o.estado));
+  const cobrados=delDia.filter(o=>esVenta(o));
   const suma=a=>a.reduce((t,o)=>t+o.total,0);
   const suma0=a=>Math.round(a.reduce((t,o)=>t+(o.propina||0),0)*100)/100;
   const efectivo=r2(cobrados.reduce((t,o)=>t+partesPago(o).efV,0));
