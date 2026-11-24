@@ -85,7 +85,10 @@ function cartItems(){ const base=Object.entries(cart).map(([id,q])=>{const p=pro
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
 function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0)+Object.values(lecheCart).reduce((a,b)=>a+b,0)+extrasCount(); }
 
-let metodoPago = '', propinaCli = 0;
+let metodoPago = '', propinaCli = 0, recogidaMin = 0, recogidaHora = '';
+const RECOGIDA=[[0,'Lo antes posible'],[10,'10 min'],[15,'15 min'],[20,'20 min'],[30,'30 min'],[45,'45 min'],[60,'1 hora']];
+function horaEn(min){ return new Date(Date.now()+min*60000).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}); }
+function setRecogida(m){ recogidaMin=m; claveEnvio=null; render(); }
 function setPropinaCli(v){ propinaCli=Math.max(0,Math.min(9999,Number(v)||0)); claveEnvio=null; render(); }
 function propinaCliInput(v){ propinaCli=Math.max(0,Math.min(9999,Number(v)||0)); claveEnvio=null; const a=document.getElementById('propTxt'), b=document.getElementById('pagarTxt'); if(a) a.textContent=fmt(propinaCli); if(b) b.textContent=fmt(cartTotal()+propinaCli); }
 async function enviarPedido(metodo){
@@ -94,9 +97,9 @@ async function enviarPedido(metodo){
   if(!claveEnvio) claveEnvio=nuevaClave();
   render();
   try{
-    const payload={items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||''})), cliente:clientLabel, comentarios:comentarios.trim(), metodo, propina:propinaCli, clave:claveEnvio};
+    const payload={items:items.map(i=>({id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||''})), cliente:clientLabel, comentarios:comentarios.trim(), metodo, propina:propinaCli, recogida:recogidaMin, clave:claveEnvio};
     const res=await fetch(`${API_URL}?action=crearPedido&payload=${encodeURIComponent(JSON.stringify(payload))}`).then(r=>r.json());
-    if(res && res.ok){ cart={}; lecheCart={}; extras={}; extraAbierto=false; extraSub=''; propinaCli=0; comentarios=''; claveEnvio=null; numPedido=res.num; step=2; }
+    if(res && res.ok){ cart={}; lecheCart={}; extras={}; extraAbierto=false; extraSub=''; propinaCli=0; comentarios=''; claveEnvio=null; numPedido=res.num; recogidaHora=recogidaMin>0?horaEn(recogidaMin):''; step=2; }
     else alert('No pudimos registrar tu pedido'+(res&&res.error?': '+res.error:'')+'. Intenta de nuevo.');
   }catch(e){
     alert('No hay conexión. Revisa tu internet e intenta de nuevo: tu pedido no se duplicará.');
@@ -223,6 +226,9 @@ function renderCheckout(){
       <div class="orderline" style="font-weight:bold"><span>Total a pagar</span><span id="pagarTxt">${fmt(cartTotal()+propinaCli)}</span></div></div>
     <div style="margin:14px 0"><label>Tu nombre o número de mesa</label><input placeholder="Ej: Mesa 4 / Ana" value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
     ${selectorLeche()}
+    <div style="margin:14px 0"><label>🕒 ¿En cuánto tiempo pasas por tu pedido?</label>
+      <div class="chips" style="flex-wrap:wrap;overflow:visible;padding:4px 0">${RECOGIDA.map(([m,t])=>`<button class="${recogidaMin===m?'active':''}" onclick="setRecogida(${m})">${t}</button>`).join('')}</div>
+      <div class="small">${recogidaMin>0?'Lo preparamos para que lo recojas hacia las '+horaEn(recogidaMin)+', caliente o recién hecho.':'Lo preparamos en cuanto confirmen tu pago.'}</div></div>
     <div style="margin:14px 0"><label>Comentarios adicionales (opcional)</label>
       <textarea rows="3" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentarios=this.value">${esc(comentarios)}</textarea>
       <div class="small" style="margin-top:4px">Indica aquí cualquier preferencia o restricción alimenticia.</div></div>
@@ -240,6 +246,7 @@ function renderDone(){
   return `<div class="card" style="text-align:center">
     <h2 style="margin:0 0 4px">¡Pedido registrado! 🎉</h2>
     ${numPedido?`<div style="font-size:2rem;font-weight:bold;color:var(--accent);margin:6px 0 10px">#${numPedido}</div>`:''}
+    ${recogidaHora?`<div style="margin:4px 0 8px">🕒 Pasa por tu pedido hacia las <strong>${recogidaHora}</strong></div>`:''}
     <p class="small">Ahora ${lugar}. En cuanto confirmen tu pago, tu pedido pasa a preparación. Te llamaremos en la barra cuando esté listo.</p>
     <button class="secondary" onclick="cart={};lecheCart={};extras={};step=0;loadProducts()">Hacer otro pedido</button>
   </div>`;
