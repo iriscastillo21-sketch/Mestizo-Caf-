@@ -497,9 +497,9 @@ function cobroHTML(o){
   return `<div class="card small" style="background:var(--bg2);margin-top:8px;border:1px solid #e0a800"><strong>💰 Por cobrar</strong> <span class="small">· el cliente pagará: ${metodoTxt(o)||'sin indicar'}</span>
     <label style="margin-top:6px">Método de pago</label>
     <div class="chips" style="padding:4px 0">${chip('efectivo','💵 Efectivo')}${chip('tarjeta','💳 Tarjeta')}${chip('mixto','💵💳 Mixto')}</div>
-    <label>Propina</label>
-    <div class="chips" style="padding:4px 0">${propChips}<input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(Number(c.prop)||0)?'':esc(c.prop)}" oninput="cobroInput('${id}','prop',this.value)"></div>
     ${efectivo}${mixto}
+    <label style="margin-top:6px">Propina</label>
+    <div class="chips" style="padding:4px 0">${propChips}<input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(Number(c.prop)||0)?'':esc(c.prop)}" oninput="cobroInput('${id}','prop',this.value)"></div>
     <div class="orderline" style="font-weight:bold;margin-top:6px"><span>Total por cobrar (con propina)</span><span id="cobT-${id}">${fmt(t)}</span></div>
     <button class="primary" style="width:100%;margin-top:6px" ${cobrando.has(id)?'disabled':''} onclick="cobrarPed('${id}')"><span id="cobB-${id}">💰 Cobrar ${fmt(t)}</span></button></div>`;
 }
