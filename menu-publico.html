@@ -85,7 +85,7 @@ function cartItems(){ const base=Object.entries(cart).map(([id,q])=>{const p=pro
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
 function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0)+Object.values(lecheCart).reduce((a,b)=>a+b,0)+extrasCount(); }
 
-let metodoPago = '', propinaCli = 0, recogidaMin = 0, recogidaHora = '';
+let metodoPago = '', faltaPago = false, propinaCli = 0, recogidaMin = 0, recogidaHora = '';
 const RECOGIDA=[[0,'Lo antes posible'],[10,'10 min'],[15,'15 min'],[20,'20 min'],[30,'30 min'],[45,'45 min'],[60,'1 hora']];
 function horaEn(min){ return new Date(Date.now()+min*60000).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}); }
 function setRecogida(m){ recogidaMin=m; claveEnvio=null; render(); }
@@ -93,6 +93,7 @@ function setPropinaCli(v){ propinaCli=Math.max(0,Math.min(9999,Number(v)||0)); c
 function propinaCliInput(v){ propinaCli=Math.max(0,Math.min(9999,Number(v)||0)); claveEnvio=null; const a=document.getElementById('propTxt'), b=document.getElementById('pagarTxt'); if(a) a.textContent=fmt(propinaCli); if(b) b.textContent=fmt(cartTotal()+propinaCli); }
 async function enviarPedido(metodo){
   const items=cartItems(); if(items.length===0 || enviando) return;
+  if(!metodo){ faltaPago=true; render(); return; }
   enviando=true; metodoPago=metodo;
   if(!claveEnvio) claveEnvio=nuevaClave();
   render();
@@ -214,41 +215,42 @@ function renderMenu(){
   </div>`;
   return buscador + `<div class="card lista">${html}</div>` + (count>0?`<button class="cartbar" onclick="step=1;render()"><span>${count} producto(s)</span><span>${fmt(cartTotal())} · Continuar →</span></button>`:'');
 }
+function elegirPago(m){ metodoPago=m; faltaPago=false; claveEnvio=null; render(); }
 function renderCheckout(){
   const items=cartItems();
   return `<div class="card">
     <h2 style="margin-top:0">Resumen del pedido</h2>
     ${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${i.nombre}</span><span>${fmt(i.precio*i.cantidad)}</span></div>`).join('')}
-    <div class="orderline big"><span>Total</span><span>${fmt(cartTotal())}</span></div>
-    <div style="margin:10px 0"><label>¿Quieres dejar propina? (opcional)</label>
-      <div class="chips" style="padding-bottom:4px">${[0,10,20,50].map(v=>`<button class="${propinaCli===v?'active':''}" onclick="setPropinaCli(${v})">${v===0?'Sin propina':'$'+v}</button>`).join('')}<input type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(propinaCli)?'':propinaCli}" oninput="propinaCliInput(this.value)"></div>
-      <div class="orderline small"><span>Propina</span><span id="propTxt">${fmt(propinaCli)}</span></div>
-      <div class="orderline" style="font-weight:bold"><span>Total a pagar</span><span id="pagarTxt">${fmt(cartTotal()+propinaCli)}</span></div></div>
     <div style="margin:14px 0"><label>Tu nombre o número de mesa</label><input placeholder="Ej: Mesa 4 / Ana" value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
     ${selectorLeche()}
+    <div style="margin:14px 0"><label>Comentarios adicionales (opcional)</label>
+      <textarea rows="3" maxlength="200" placeholder="Ej: sin azúcar, alergia a nueces…" oninput="comentarios=this.value">${esc(comentarios)}</textarea>
+      <div class="small" style="margin-top:4px">Indica aquí cualquier preferencia o restricción alimenticia.</div></div>
+    <div style="margin:14px 0"><label>¿Cómo vas a pagar?</label>
+      <div class="chips" style="flex-wrap:wrap;overflow:visible;padding:4px 0">${[['efectivo','💵 Efectivo'],['tarjeta','💳 Tarjeta']].map(([m,t])=>`<button class="${metodoPago===m?'active':''}" onclick="elegirPago('${m}')">${t}</button>`).join('')}</div>
+      <div class="small" style="${faltaPago&&!metodoPago?'color:#c0392b;font-weight:bold':''}">${faltaPago&&!metodoPago?'Elige cómo vas a pagar. ':''}El pago se hace en el mostrador, al recoger tu pedido.</div></div>
     <div style="margin:14px 0"><label>🕒 ¿En cuánto tiempo pasas por tu pedido?</label>
       <div class="chips" style="flex-wrap:wrap;overflow:visible;padding:4px 0">${RECOGIDA.map(([m,t])=>`<button class="${recogidaMin===m?'active':''}" onclick="setRecogida(${m})">${t}</button>`).join('')}</div>
-      <div class="small">${recogidaMin>0?'Lo preparamos para que lo recojas hacia las '+horaEn(recogidaMin)+', caliente o recién hecho.':'Lo preparamos en cuanto confirmen tu pago.'}</div></div>
-    <div style="margin:14px 0"><label>Comentarios adicionales (opcional)</label>
-      <textarea rows="3" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentarios=this.value">${esc(comentarios)}</textarea>
-      <div class="small" style="margin-top:4px">Indica aquí cualquier preferencia o restricción alimenticia.</div></div>
-    <div class="small" style="margin:0 0 8px">Todos los precios están en pesos mexicanos (MXN).</div>
-    <label style="margin-bottom:8px">¿Cómo vas a pagar?</label>
-    <div class="actions" style="display:flex;gap:10px">
-      <button class="secondary" style="flex:1;padding:14px" ${enviando?'disabled style="opacity:.6"':''} onclick="enviarPedido('efectivo')">${enviando&&metodoPago==='efectivo'?'Enviando…':'💵 Efectivo'}</button>
-      <button class="secondary" style="flex:1;padding:14px" ${enviando?'disabled style="opacity:.6"':''} onclick="enviarPedido('tarjeta')">${enviando&&metodoPago==='tarjeta'?'Enviando…':'💳 Tarjeta'}</button>
+      <div class="small">${recogidaMin>0?'Lo preparamos para que lo recojas hacia las '+horaEn(recogidaMin)+', caliente o recién hecho.':'Lo preparamos en cuanto lo recibamos.'}</div></div>
+    <div style="margin:14px 0"><label>¿Quieres dejar propina? (opcional)</label>
+      <div class="chips" style="padding-bottom:4px">${[0,10,20,50].map(v=>`<button class="${propinaCli===v?'active':''}" onclick="setPropinaCli(${v})">${v===0?'Sin propina':'$'+v}</button>`).join('')}<input type="number" inputmode="decimal" min="0" placeholder="Otra $" style="width:90px;flex:0 0 auto" value="${[0,10,20,50].includes(propinaCli)?'':propinaCli}" oninput="propinaCliInput(this.value)"></div>
     </div>
+    <div class="orderline small"><span>Subtotal</span><span>${fmt(cartTotal())}</span></div>
+    <div class="orderline small"><span>Propina</span><span id="propTxt">${fmt(propinaCli)}</span></div>
+    <div class="orderline big" style="margin-bottom:4px"><span>Total por pagar</span><span id="pagarTxt">${fmt(cartTotal()+propinaCli)}</span></div>
+    <div class="small" style="margin:0 0 10px">Todos los precios están en pesos mexicanos (MXN).</div>
+    <button class="primary" style="width:100%;padding:14px" ${enviando?'disabled style="opacity:.6"':''} onclick="enviarPedido(metodoPago)">${enviando?'Enviando…':'Enviar pedido'}</button>
     <div style="margin-top:10px"><button class="secondary" onclick="step=0;render()">Volver al menú</button></div>
   </div>`;
 }
 function renderDone(){
-  const lugar = metodoPago==='efectivo' ? 'pasa al mostrador a pagar en efectivo' : 'espera a que el mesero pase a cobrarte con la terminal';
+  const lugar = metodoPago==='tarjeta' ? 'pasa al mostrador a recoger tu pedido y pagar con tarjeta' : 'pasa al mostrador a recoger tu pedido y pagar en efectivo';
   return `<div class="card" style="text-align:center">
     <h2 style="margin:0 0 4px">¡Pedido registrado! 🎉</h2>
     ${numPedido?`<div style="font-size:2rem;font-weight:bold;color:var(--accent);margin:6px 0 10px">#${numPedido}</div>`:''}
     ${recogidaHora?`<div style="margin:4px 0 8px">🕒 Pasa por tu pedido hacia las <strong>${recogidaHora}</strong></div>`:''}
-    <p class="small">Ahora ${lugar}. En cuanto confirmen tu pago, tu pedido pasa a preparación. Te llamaremos en la barra cuando esté listo.</p>
-    <button class="secondary" onclick="cart={};lecheCart={};extras={};step=0;loadProducts()">Hacer otro pedido</button>
+    <p class="small">Cuando esté listo, ${lugar}. Te llamaremos en la barra.</p>
+    <button class="secondary" onclick="cart={};lecheCart={};extras={};metodoPago='';faltaPago=false;step=0;loadProducts()">Hacer otro pedido</button>
   </div>`;
 }
 function render(){
