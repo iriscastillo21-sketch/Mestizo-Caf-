@@ -350,7 +350,11 @@ function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toF
 function todayStr(d){ return new Date(d).toDateString(); }
 function setTab(t){ tab=t; if(t==='hist' && !pedidosTodos){ pedidosTodos=true; refrescarRapido(); } render(); if(usaCaja(t)) cargarCaja().then(()=>{ if(tab===t && !escribiendo()) render(); }); if(t==='ins'||t==='inv') cargarInsumos(true).then(()=>{ if(tab===t && !escribiendo()) render(); }); }
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null;
-  if(tieneLeche(p)){ const k=id+'|'+lecheDe(id), nx=(lecheCart[k]||0)+delta; if(nx<0||lecheQty(id)+delta>p.stock) return; if(nx) lecheCart[k]=nx; else delete lecheCart[k]; render(); return; } const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
+  if(tieneLeche(p)){
+    if(delta>0){ if(lecheQty(id)>=p.stock) return; const k=id+'|Entera'; lecheCart[k]=(lecheCart[k]||0)+1; }
+    else { const l=[...LECHES].reverse().find(x=>lecheCart[id+'|'+x]); if(!l) return; const k=id+'|'+l; lecheCart[k]--; if(!lecheCart[k]) delete lecheCart[k]; }
+    render(); return;
+  } const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function addExtra(label,delta){ const p=products.find(esExtra); if(!p) return; claveReg=null; const next=Math.max(0,Math.min(20,(extras[label]||0)+delta)); if(next) extras[label]=next; else delete extras[label]; render(); }
 function quitarExtra(label){ delete extras[label]; claveReg=null; render(); }
 function llaveEsp(i){ return i.libre ? '' : (i.opcion ? 'e:'+i.opcion : 'p:'+i.id+(i.leche?'|'+i.leche:'')); }
@@ -690,19 +694,21 @@ function tieneLeche(p){
   return false;
 }
 const LECHES=['Entera','Deslactosada','Soya'];
-let lecheCart={}, lecheSel={};   // lecheCart: 'id|Leche' -> cantidad · lecheSel: id -> leche marcada en los botones
+let lecheCart={};   // 'id|Leche' -> cantidad (por defecto 'Entera'; el cliente elige la leche en el resumen)
 function extraPrecio(){ const e=products.find(esExtra); return e?e.precio:0; }
-function lecheDe(id){ return lecheSel[id]||'Entera'; }
 function lecheQty(id){ return LECHES.reduce((s,l)=>s+(lecheCart[id+'|'+l]||0),0); }
-function setLeche(ids,l){ ids.split(',').forEach(id=>{ lecheSel[id]=l; }); render(); }
 function quitarLeche(k){ delete lecheCart[k]; claveReg=null; render(); }
-function lecheItems(){ return Object.entries(lecheCart).map(([k,q])=>{ const [id,l]=k.split('|'); const p=products.find(x=>x.id===id); if(!p) return null; const sx=(l==='Soya')?extraPrecio():0; return {id,nombre:p.nombre+' · Leche '+l.toLowerCase()+(sx?' (+$'+sx+')':''),precio:p.precio+sx,cantidad:q,leche:l}; }).filter(Boolean); }
-function filaLeche(a,b){
-  const ps=[a,b].filter(Boolean); if(!ps.length||!tieneLeche(ps[0])) return '';
-  const ids=ps.map(p=>p.id).join(','), sel=lecheDe(ps[0].id);
-  const res=ps.map(p=>{ const t=parseTam(p.nombre).tam; const det=LECHES.filter(l=>lecheCart[p.id+'|'+l]).map(l=>lecheCart[p.id+'|'+l]+' '+l.toLowerCase()); return det.length?(t?t+': ':'')+det.join(', '):''; }).filter(Boolean).join(' · ');
-  return `<div class="lechefila"><div class="chips" style="flex-wrap:wrap;overflow:visible;padding:2px 0 4px;align-items:center"><span class="small">🥛 Leche:</span>${LECHES.map(l=>`<button class="${l===sel?'active':''}" onclick="setLeche('${ids}','${l}')">${l}${l==='Soya'&&extraPrecio()?' +$'+extraPrecio():''}</button>`).join('')}</div>${res?`<div class="small" style="padding:0 0 6px">Elegido → ${esc(res)}</div>`:''}</div>`;
+function cambiarLecheUnidad(id,de,a){ if(de===a) return; const kd=id+'|'+de; if(!lecheCart[kd]) return; lecheCart[kd]--; if(!lecheCart[kd]) delete lecheCart[kd]; const ka=id+'|'+a; lecheCart[ka]=(lecheCart[ka]||0)+1; claveReg=null; render(); }
+function selectorLeche(){
+  const ids=[...new Set(Object.keys(lecheCart).map(k=>k.split('|')[0]))]; if(!ids.length) return '';
+  const ex=extraPrecio(); let n=0;
+  const filas=ids.map(id=>{ const p=products.find(x=>x.id===id); if(!p) return ''; let h='';
+    LECHES.forEach(l=>{ for(let j=0;j<(lecheCart[id+'|'+l]||0);j++){ n++;
+      h+=`<div style="margin:6px 0"><div class="small">${esc(p.nombre)} · bebida ${n}</div><div class="chips" style="flex-wrap:wrap;overflow:visible;padding:2px 0">${LECHES.map(x=>`<button class="${x===l?'active':''}" onclick="cambiarLecheUnidad('${id}','${l}','${x}')">${x}${x==='Soya'&&ex?' +$'+ex:''}</button>`).join('')}</div></div>`; } });
+    return h; }).join('');
+  return `<div style="margin:10px 0"><label>🥛 Tipo de leche de cada bebida</label>${filas}</div>`;
 }
+function lecheItems(){ return Object.entries(lecheCart).map(([k,q])=>{ const [id,l]=k.split('|'); const p=products.find(x=>x.id===id); if(!p) return null; const sx=(l==='Soya')?extraPrecio():0; return {id,nombre:p.nombre+' · Leche '+l.toLowerCase()+(sx?' (+$'+sx+')':''),precio:p.precio+sx,cantidad:q,leche:l}; }).filter(Boolean); }
 
 function agrupar(lista){
   const mapa=new Map();
@@ -716,7 +722,7 @@ function agrupar(lista){
 function celdaProd(p){
   if(!p) return '<div class="cel vacia">—</div>';
   if(esExtra(p)) return celdaExtra(p);
-  const lch=tieneLeche(p), qty=lch?(lecheCart[p.id+'|'+lecheDe(p.id)]||0):(cart[p.id]||0), totQ=lch?lecheQty(p.id):qty, out=p.stock<=0;
+  const lch=tieneLeche(p), qty=lch?lecheQty(p.id):(cart[p.id]||0), totQ=qty, out=p.stock<=0;
   const nota = out ? 'Agotado' : (p.stock<=3 ? 'Últimas '+p.stock : (ADMIN_VISTA && p.stock<100 ? 'stock '+p.stock : ''));
   const ctrl = out ? '' : `<div class="qty"><button ${qty===0?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',-1)">–</button><span>${qty}</span><button ${totQ>=p.stock?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',1)">+</button></div>`;
   return `<div class="cel"><div class="precio">${fmt(p.precio)}</div>${ctrl}${nota?`<div class="nota">${nota}</div>`:''}</div>`;
@@ -728,10 +734,10 @@ function bloqueCategoria(lista){
   grupos.forEach(g=>{
     const solo = g.unico && !g.Mediano && !g.Grande;
     if(solo){
-      h+=`<div class="fila ${conTam?'':'uno'}"><div class="nom">${esc(g.base)}</div>${conTam?`<div class="span2">${celdaProd(g.unico)}</div>`:celdaProd(g.unico)}</div>`+filaLeche(g.unico,null);
+      h+=`<div class="fila ${conTam?'':'uno'}"><div class="nom">${esc(g.base)}</div>${conTam?`<div class="span2">${celdaProd(g.unico)}</div>`:celdaProd(g.unico)}</div>`;
       if(esExtra(g.unico)) h+=panelExtras();
     } else {
-      h+=`<div class="fila"><div class="nom">${esc(g.base)}</div>${celdaProd(g.Mediano)}${celdaProd(g.Grande)}</div>`+filaLeche(g.Mediano,g.Grande);
+      h+=`<div class="fila"><div class="nom">${esc(g.base)}</div>${celdaProd(g.Mediano)}${celdaProd(g.Grande)}</div>`;
     }
   });
   return h;
@@ -775,6 +781,7 @@ function renderRegistrar(){
     <div class="chips" style="padding-bottom:4px">${chipD(0,'Ninguno')}${chipD(10,'10%')}${chipD(15,'15%')}${chipD(100,'🎁 Cortesía')}</div>
     ${pct>0?`<div style="margin:6px 0"><label>Motivo (obligatorio)</label><input value="${esc(motivoDesc)}" placeholder="Ej: cumpleaños, error en el servicio" oninput="motivoDesc=this.value"></div>`:''}`}
     <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
+    ${selectorLeche()}
     <div style="margin:10px 0"><label>Comentarios o restricciones del cliente (opcional)</label>
       <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea>
       <div class="chips" style="padding:6px 0 0"><button onclick="addNota('Leche deslactosada')">+ Leche deslactosada</button><button onclick="addNota('Sin azúcar')">+ Sin azúcar</button><button onclick="addNota('Alergia a ')">+ Alergia</button></div></div>
