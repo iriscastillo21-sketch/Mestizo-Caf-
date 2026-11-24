@@ -783,8 +783,7 @@ function renderRegistrar(){
     <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
     ${selectorLeche()}
     <div style="margin:10px 0"><label>Comentarios o restricciones del cliente (opcional)</label>
-      <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea>
-      <div class="chips" style="padding:6px 0 0"><button onclick="addNota('Leche deslactosada')">+ Leche deslactosada</button><button onclick="addNota('Sin azúcar')">+ Sin azúcar</button><button onclick="addNota('Alergia a ')">+ Alergia</button></div></div>
+      <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea></div>
     ${pct===100?'':(()=>{ const tc=r2(totalConDesc+propinaReg); return `<div class="card small" style="background:var(--bg2);margin:8px 0"><label>💵 Calculadora de cambio (solo para cobrar, no se guarda)</label>
       <div class="chips" style="padding:4px 0"><button onclick="setRecibido(null)">Exacto</button>${billetesSug(tc).map(v=>`<button class="${Number(recibidoEf)===v?'active':''}" onclick="setRecibido(${v})">$${v}</button>`).join('')}</div>
       <input class="nospin" type="number" inputmode="decimal" min="0" placeholder="Otro monto recibido $" value="${esc(recibidoEf)}" oninput="recibidoInput(this.value)">
