@@ -322,7 +322,14 @@ async function guardarNota(id){
   try{ const res=await api('editarNota',{id, comentarios:editNotaTxt.trim()}); if(res&&res.ok){ editNotaId=null; await loadAll(); } else alert('No se pudo guardar'+(res&&res.error?': '+res.error:'')); }
   finally{ guardandoNota=false; render(); }
 }
-function comentarioHTML(o){
+function recogidaHTML(o){
+  if(o.recogida===null || o.recogida===undefined || !['pendiente_pago','aprobado','listo'].includes(o.estado)) return '';
+  if(o.recogida===0) return '<div class="card small" style="background:var(--bg2);margin-top:8px">🕒 <strong>Recoge:</strong> lo antes posible</div>';
+  const t=new Date(new Date(o.fecha).getTime()+o.recogida*60000).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
+  return `<div class="card small" style="background:var(--bg2);margin-top:8px;border:1px solid var(--accent)">🕒 <strong>Recoge hacia las ${t}</strong> (en ${o.recogida} min desde que pidió)</div>`;
+}
+function comentarioHTML(o){ return recogidaHTML(o)+comentarioBase(o); }
+function comentarioBase(o){
   const puede=['pendiente_pago','aprobado','listo'].includes(o.estado);
   if(editNotaId===o.id){
     const chips=['Leche entera','Leche deslactosada','Leche de soya','Sin azúcar','Alergia a '].map(t=>`<button data-t="${esc(t)}" onclick="notaChip(this.dataset.t)">+ ${esc(t)}</button>`).join('');
