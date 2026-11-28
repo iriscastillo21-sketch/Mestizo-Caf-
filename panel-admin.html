@@ -353,14 +353,14 @@ function descAvisos(lista){
   ].filter(Boolean);
 }
 function descAvisosCard(lista){ const a=descAvisos(lista); return a.length?`<div class="card small" style="background:var(--bg2)">${a.map(x=>`<div style="margin:3px 0">${x}</div>`).join('')}</div>`:''; }
-function fmt(n){ n=Number(n); return '$'+(Number.isInteger(n)?n.toFixed(0):n.toFixed(2)); }
+function fmt(n){ n=Number(n); return '$'+n.toLocaleString('es-MX',{minimumFractionDigits:Number.isInteger(n)?0:2,maximumFractionDigits:2}); }   // pesos mexicanos (MXN)
 function todayStr(d){ return new Date(d).toDateString(); }
 function setTab(t){ tab=t; if(t==='hist' && !pedidosTodos){ pedidosTodos=true; refrescarRapido(); } render(); if(usaCaja(t)) cargarCaja().then(()=>{ if(tab===t && !escribiendo()) render(); }); if(t==='ins'||t==='inv') cargarInsumos(true).then(()=>{ if(tab===t && !escribiendo()) render(); }); }
 function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; claveReg=null;
-  if(tieneSabor(p)){
-    if(delta>0){ if(saborQty(id)>=p.stock) return; saborUnits.push({id,s:SIN_SABOR}); }
-    else { const i=saborUnits.map(u=>u.id).lastIndexOf(id); if(i<0) return; saborUnits.splice(i,1); }
-    faltaSabor=false; render(); return;
+  if(esTamal(p)){
+    if(delta>0){ if(tamalQty(id)>=p.stock) return; tamalUnits.push({id,t:'Tamal'}); }
+    else { const i=tamalUnits.map(u=>u.id).lastIndexOf(id); if(i<0) return; tamalUnits.splice(i,1); }
+    render(); return;
   }
   if(tieneLeche(p)){
     if(delta>0){ if(lecheQty(id)>=p.stock) return; lecheUnits.push({id,l:'Entera'}); }
@@ -369,18 +369,17 @@ function addQty(id,delta){ const p=products.find(x=>x.id===id); if(!p) return; c
   } const next=(cart[id]||0)+delta; if(next<0||next>p.stock) return; cart[id]=next; if(!cart[id]) delete cart[id]; render(); }
 function addExtra(label,delta){ const p=products.find(esExtra); if(!p) return; claveReg=null; const next=Math.max(0,Math.min(20,(extras[label]||0)+delta)); if(next) extras[label]=next; else delete extras[label]; render(); }
 function quitarExtra(label){ delete extras[label]; claveReg=null; render(); }
-function llaveEsp(i){ return i.libre ? '' : (i.opcion ? 'e:'+i.opcion : 'p:'+i.id+(i.leche?'|'+i.leche:'')+(i.sabor?'|'+i.sabor:'')); }
+function llaveEsp(i){ return i.libre ? '' : (i.opcion ? 'e:'+i.opcion : 'p:'+i.id+(i.leche?'|'+i.leche:'')+(i.presentacion?'|'+i.presentacion:'')); }
 function aplicaEsp(arr){
   return arr.map(i=>{ i.precioLista=i.precio; i.key=llaveEsp(i);
     if(empleadoMode && i.key){ const v=preciosEsp[i.key]; if(v!==undefined && !isNaN(v) && v>=0 && v<=i.precioLista){ i.precio=v; i.especial=true; } }
     return i; });
 }
-function cartItems(){ const base0=Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); const pe=products.find(esExtra); const ex=pe?Object.entries(extras).map(([k,q])=>({id:pe.id,nombre:'Extra: '+k,precio:pe.precio,cantidad:q,opcion:k})):[]; const lb=libres.map((l,k)=>({id:'libre',nombre:l.nombre,precio:l.precio,cantidad:l.cantidad,libre:true,grupo:l.grupo,insumoId:l.insumoId,insumoCant:l.insumoCant,idx:k})); return aplicaEsp(base0.concat(lecheItems(),saborItems(),ex,lb)); }
+function cartItems(){ const base0=Object.entries(cart).map(([id,q])=>{const p=products.find(x=>x.id===id);return{id,nombre:p.nombre,precio:p.precio,cantidad:q};}); const pe=products.find(esExtra); const ex=pe?Object.entries(extras).map(([k,q])=>({id:pe.id,nombre:'Extra: '+k,precio:pe.precio,cantidad:q,opcion:k})):[]; const lb=libres.map((l,k)=>({id:'libre',nombre:l.nombre,precio:l.precio,cantidad:l.cantidad,libre:true,grupo:l.grupo,insumoId:l.insumoId,insumoCant:l.insumoCant,idx:k})); return aplicaEsp(base0.concat(lecheItems(),tamalItems(),ex,lb)); }
 function cartTotal(){ return cartItems().reduce((s,i)=>s+i.precio*i.cantidad,0); }
 
 async function registrarPedidoManual(metodo){
   const items=cartItems(); if(items.length===0 || registrando) return;
-  if(saborPendiente()){ faltaSabor=true; render(); return; }
   if(!metodo){ faltaMetodoReg=true; render(); return; }
   if(descuentoPct>0 && !motivoDesc.trim()){ alert('Escribe el motivo del descuento o cortesía.'); return; }
   if(items.some(i=>i.especial) && !empleadoNombre.trim()){ alert('Escribe el nombre del empleado para aplicar el precio especial.'); return; }
@@ -388,8 +387,8 @@ async function registrarPedidoManual(metodo){
   registrando=true;
   if(!claveReg) claveReg=nuevaClave();
   try{
-    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>i.libre?{id:'libre',libre:true,nombre:i.nombre,precio:i.precio,grupo:i.grupo,cantidad:i.cantidad,insumoId:i.insumoId||'',insumoCant:i.insumoCant||0}:(i.especial?{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||'',sabor:i.sabor||'',precioEspecial:i.precio}:{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||'',sabor:i.sabor||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, empleado:empleadoNombre.trim(), propina:(descuentoPct===100?0:propinaReg), pagoEfectivo:(metodo==='mixto'?Number(mixtoEf):0)});
-    if(res && res.ok){ cart={}; lecheUnits=[]; saborUnits=[]; faltaSabor=false; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
+    const res=await api('registrarVenta',{clave:claveReg, items:items.map(i=>i.libre?{id:'libre',libre:true,nombre:i.nombre,precio:i.precio,grupo:i.grupo,cantidad:i.cantidad,insumoId:i.insumoId||'',insumoCant:i.insumoCant||0}:(i.especial?{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||'',presentacion:i.presentacion||'',precioEspecial:i.precio}:{id:i.id,cantidad:i.cantidad,opcion:i.opcion||'',leche:i.leche||'',presentacion:i.presentacion||''})), cliente:clientLabel, comentarios:comentariosReg.trim(), metodo, descuento:descuentoPct, motivo:motivoDesc, empleado:empleadoNombre.trim(), propina:(descuentoPct===100?0:propinaReg), pagoEfectivo:(metodo==='mixto'?Number(mixtoEf):0)});
+    if(res && res.ok){ cart={}; lecheUnits=[]; tamalUnits=[]; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; }
     await refrescarRapido();
   } finally { registrando=false; }
 }
@@ -462,7 +461,7 @@ function celdaExtra(p){
 function quitarItem(id){ delete cart[id]; claveReg=null; render(); }
 function vaciarPedido(){
   if(!confirm('¿Vaciar el pedido actual?')) return;
-  cart={}; lecheUnits=[]; saborUnits=[]; faltaSabor=false; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
+  cart={}; lecheUnits=[]; tamalUnits=[]; extras={}; libres=[]; mixtoAbierto=false; metodoReg=''; faltaMetodoReg=false; mixtoEf=''; recibidoEf=''; empleadoMode=false; empleadoNombre=''; preciosEsp={}; extraAbierto=false; extraSub=''; propinaReg=0; clientLabel=''; comentariosReg=''; descuentoPct=0; motivoDesc=''; claveReg=null; render();
 }
 const aprobando=new Set();
 async function aprobar(id){
@@ -561,11 +560,25 @@ async function agregarProducto(){
   const precio=Number(document.getElementById('np-precio').value)||0;
   const stock=Number(document.getElementById('np-stock').value)||0;
   const categoria=document.getElementById('np-cat').value.trim()||'Otros';
-  if(!nombre) return;
-  await post('agregarProducto', {nombre,precio,stock,categoria});
+  if(!nombre){ alert('Escribe el nombre del producto.'); return; }
+  const r=await post('agregarProducto', {nombre,precio,stock,categoria});
+  if(r&&r.ok) await cargarInsumos(true);
+}
+let ingresoAbierto=null, registrandoIngreso=false;
+function toggleIngreso(id){ ingresoAbierto = ingresoAbierto===id ? null : id; mermaAbierta=null; render(); }
+async function registrarIngreso(id){
+  if(registrandoIngreso) return;
+  const cant=Math.floor(Number(document.getElementById('i-cant-'+id).value));
+  const nota=document.getElementById('i-nota-'+id).value.trim();
+  if(!(cant>=1)){ alert('Escribe cuántas piezas entran.'); return; }
+  registrandoIngreso=true;
+  try{
+    const r=await api('ingresoProducto',{id,cantidad:cant,nota});
+    if(r&&r.ok){ ingresoAbierto=null; await cargarInsumos(true); await loadAll(); }
+  } finally { registrandoIngreso=false; }
 }
 let mermaAbierta=null, registrandoMerma=false;
-function toggleMerma(id){ mermaAbierta = mermaAbierta===id ? null : id; render(); }
+function toggleMerma(id){ mermaAbierta = mermaAbierta===id ? null : id; ingresoAbierto=null; render(); }
 async function registrarMerma(id){
   if(registrandoMerma) return;
   const cant=Math.floor(Number(document.getElementById('m-cant-'+id).value));
@@ -580,12 +593,8 @@ async function registrarMerma(id){
 }
 async function guardarProducto(id){
   const stock=Number(document.getElementById('p-stock-'+id).value)||0;
-  if(role==='admin'){
-    const precio=Number(document.getElementById('p-precio-'+id).value)||0;
-    await post('actualizarStock', {id, precio, stock});
-  } else {
-    await post('actualizarStock', {id, stock});
-  }
+  const precio=Number(document.getElementById('p-precio-'+id).value)||0;
+  await post('actualizarStock', {id, precio, stock});
 }
 
 function motivoRapido(t){ cancelMotivo=t; render(); }
@@ -770,22 +779,23 @@ function selectorLeche(){
 function lecheItems(){ const m=new Map(); lecheUnits.forEach(u=>{ const k=u.id+'|'+u.l; m.set(k,(m.get(k)||0)+1); });
   return [...m].map(([k,q])=>{ const [id,l]=k.split('|'); const p=products.find(x=>x.id===id); if(!p) return null; const sx=(l==='Soya')?extraPrecio():0; return {id,nombre:p.nombre+' · Leche '+l.toLowerCase()+(sx?' (+$'+sx+')':''),precio:p.precio+sx,cantidad:q,leche:l}; }).filter(Boolean); }
 
-function tieneSabor(p){ return !!p && /tamal/i.test(String(p.nombre||'')); }
-const SABORES=['Rojo','Verde','Rajas con queso'], SIN_SABOR='Sin elegir';
-let saborUnits=[], faltaSabor=false;   // una entrada {id,s} por tamal; 'Sin elegir' hasta que se elige el sabor
-function saborQty(id){ return saborUnits.filter(u=>u.id===id).length; }
-function saborPendiente(){ return saborUnits.some(u=>u.s===SIN_SABOR); }
-function avisoSabor(){ return (faltaSabor&&saborPendiente())?'<div class="small" style="color:#c0392b;font-weight:bold;margin:4px 0">Elige el sabor de cada tamal.</div>':''; }
-function quitarSabor(k){ const [id,s]=k.split('|'); saborUnits=saborUnits.filter(u=>!(u.id===id&&u.s===(s||SIN_SABOR))); faltaSabor=false; claveReg=null; render(); }
-function cambiarSaborUnidad(i,a){ if(!saborUnits[i]) return; saborUnits[i].s=a; faltaSabor=false; claveReg=null; render(); }
-function selectorSabor(){
-  if(!saborUnits.length) return '';
-  const filas=saborUnits.map((u,i)=>{ const p=products.find(x=>x.id===u.id); if(!p) return '';
-    return `<div style="margin:6px 0"><div class="small">${esc(p.nombre)} · tamal ${i+1}${u.s===SIN_SABOR?' <span style="color:#c0392b">· elige el sabor</span>':''}</div><div class="chips" style="flex-wrap:wrap;overflow:visible;padding:2px 0">${SABORES.map(x=>`<button class="${x===u.s?'active':''}" onclick="cambiarSaborUnidad(${i},'${x}')">${x}</button>`).join('')}</div></div>`; }).join('');
-  return `<div style="margin:10px 0"><label>🌽 Sabor de cada tamal</label>${filas}${avisoSabor()}</div>`;
+function esTamal(p){ return !!p && /^tamales?$/i.test(String(p.categoria||'').trim()); }
+const TAMAL_PRES=['Tamal','Preparado','Frío','Lonche'], TAMAL_PREP_EXTRA=10, TAMAL_FRIO=25, TAMAL_LONCHE=55;
+function precioTamal(p,pres){ return pres==='Preparado'?p.precio+TAMAL_PREP_EXTRA:pres==='Frío'?TAMAL_FRIO:pres==='Lonche'?TAMAL_LONCHE:p.precio; }
+let tamalUnits=[];   // una entrada {id,t} por tamal; cada sabor es un producto con su stock y la presentación cambia el precio
+function tamalQty(id){ return tamalUnits.filter(u=>u.id===id).length; }
+function quitarTamal(k){ const [id,t]=k.split('|'); tamalUnits=tamalUnits.filter(u=>!(u.id===id&&u.t===t)); claveReg=null; render(); }
+function cambiarTamalUnidad(i,a){ if(!tamalUnits[i]) return; tamalUnits[i].t=a; claveReg=null; render(); }
+function nombreTamal(p,t){ return p.nombre+(t==='Tamal'?'':' · '+t.toLowerCase()+(t==='Preparado'?' (+$'+TAMAL_PREP_EXTRA+')':'')); }
+function selectorTamal(){
+  if(!tamalUnits.length) return '';
+  const txt=(p,t)=>t==='Tamal'?'Normal '+fmt(p.precio):t==='Preparado'?'Preparado +$'+TAMAL_PREP_EXTRA+' ('+fmt(precioTamal(p,t))+')':t==='Frío'?'Frío '+fmt(TAMAL_FRIO):'Lonche '+fmt(TAMAL_LONCHE);
+  const filas=tamalUnits.map((u,i)=>{ const p=products.find(x=>x.id===u.id); if(!p) return '';
+    return `<div style="margin:6px 0"><div class="small">${esc(p.nombre)} · tamal ${i+1}</div><div class="chips" style="flex-wrap:wrap;overflow:visible;padding:2px 0">${TAMAL_PRES.map(x=>`<button class="${x===u.t?'active':''}" onclick="cambiarTamalUnidad(${i},'${x}')">${txt(p,x)}</button>`).join('')}</div></div>`; }).join('');
+  return `<div style="margin:10px 0"><label>🌽 ¿Cómo quieres tu tamal?</label>${filas}</div>`;
 }
-function saborItems(){ const m=new Map(); saborUnits.forEach(u=>{ const k=u.id+'|'+u.s; m.set(k,(m.get(k)||0)+1); });
-  return [...m].map(([k,q])=>{ const [id,l]=k.split('|'); const p=products.find(x=>x.id===id); if(!p) return null; return {id,nombre:p.nombre+(l===SIN_SABOR?' · sabor sin elegir':' · '+l.toLowerCase()),precio:p.precio,cantidad:q,sabor:l===SIN_SABOR?'':l}; }).filter(Boolean); }
+function tamalItems(){ const m=new Map(); tamalUnits.forEach(u=>{ const k=u.id+'|'+u.t; m.set(k,(m.get(k)||0)+1); });
+  return [...m].map(([k,q])=>{ const [id,t]=k.split('|'); const p=products.find(x=>x.id===id); if(!p) return null; return {id,nombre:nombreTamal(p,t),precio:precioTamal(p,t),cantidad:q,presentacion:t}; }).filter(Boolean); }
 
 function agrupar(lista){
   const mapa=new Map();
@@ -799,7 +809,7 @@ function agrupar(lista){
 function celdaProd(p){
   if(!p) return '<div class="cel vacia">—</div>';
   if(esExtra(p)) return celdaExtra(p);
-  const lch=tieneLeche(p), qty=tieneSabor(p)?saborQty(p.id):lch?lecheQty(p.id):(cart[p.id]||0), totQ=qty, out=p.stock<=0;
+  const lch=tieneLeche(p), qty=esTamal(p)?tamalQty(p.id):lch?lecheQty(p.id):(cart[p.id]||0), totQ=qty, out=p.stock<=0;
   const nota = out ? 'Agotado' : (p.stock<=3 ? 'Últimas '+p.stock : (ADMIN_VISTA && p.stock<100 ? 'stock '+p.stock : ''));
   const ctrl = out ? '' : `<div class="qty"><button ${qty===0?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',-1)">–</button><span>${qty}</span><button ${totQ>=p.stock?'disabled style="opacity:.3"':''} onclick="addQty('${p.id}',1)">+</button></div>`;
   return `<div class="cel"><div class="precio">${fmt(p.precio)}</div>${ctrl}${nota?`<div class="nota">${nota}</div>`:''}</div>`;
@@ -844,10 +854,10 @@ function renderRegistrar(){
   const totalConDesc=Math.round(sub*(100-pct))/100;
   const chipD=(v,txt)=>`<button class="${descuentoPct===v?'active':''}" onclick="setDescuento(${v})">${txt}</button>`;
   const insTxt=i=>{ if(!i.insumoId) return ''; const n=insumos.find(x=>x.id===i.insumoId); return n?`<br><span class="small">↳ descuenta ${Math.round(i.insumoCant*i.cantidad*1000)/1000} ${esc(n.unidad)} de ${esc(n.nombre)}</span>`:''; };
-  const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${esc(i.nombre)}${insTxt(i)}</span><span>${empleadoMode&&i.key?`<input class="nospin" type="number" inputmode="decimal" min="0" step="any" style="width:64px;padding:4px 6px" data-k="${esc(i.key)}" value="${preciosEsp[i.key]!==undefined?preciosEsp[i.key]:i.precioLista}" oninput="precioEspInput(this.dataset.k,this.value)"> <span class="small">c/u (lista ${fmt(i.precioLista)})</span> `:fmt(i.precio*i.cantidad)}<button class="xbtn" title="Quitar" ${i.libre?`onclick="quitarLibre(${i.idx})"`:i.sabor?`data-k="${esc(i.id+'|'+i.sabor)}" onclick="quitarSabor(this.dataset.k)"`:i.leche?`data-k="${esc(i.id+'|'+i.leche)}" onclick="quitarLeche(this.dataset.k)"`:i.opcion?`data-o="${esc(i.opcion)}" onclick="quitarExtra(this.dataset.o)"`:`onclick="quitarItem('${i.id}')"`}>✕</button></span></div>`).join('')}
+  const resumen = items.length?`<div class="card">${items.map(i=>`<div class="orderline"><span>${i.cantidad}x ${esc(i.nombre)}${insTxt(i)}</span><span>${empleadoMode&&i.key?`<input class="nospin" type="number" inputmode="decimal" min="0" step="any" style="width:64px;padding:4px 6px" data-k="${esc(i.key)}" value="${preciosEsp[i.key]!==undefined?preciosEsp[i.key]:i.precioLista}" oninput="precioEspInput(this.dataset.k,this.value)"> <span class="small">c/u (lista ${fmt(i.precioLista)})</span> `:fmt(i.precio*i.cantidad)}<button class="xbtn" title="Quitar" ${i.libre?`onclick="quitarLibre(${i.idx})"`:i.presentacion?`data-k="${esc(i.id+'|'+i.presentacion)}" onclick="quitarTamal(this.dataset.k)"`:i.leche?`data-k="${esc(i.id+'|'+i.leche)}" onclick="quitarLeche(this.dataset.k)"`:i.opcion?`data-o="${esc(i.opcion)}" onclick="quitarExtra(this.dataset.o)"`:`onclick="quitarItem('${i.id}')"`}>✕</button></span></div>`).join('')}
     <div style="margin:10px 0"><label>Cliente/mesa</label><input value="${esc(clientLabel)}" oninput="clientLabel=this.value"></div>
     ${selectorLeche()}
-    ${selectorSabor()}
+    ${selectorTamal()}
     <div style="margin:10px 0"><label>Comentarios o restricciones del cliente (opcional)</label>
       <textarea rows="2" maxlength="200" placeholder="Ej: leche deslactosada, sin azúcar, alergia a nueces…" oninput="comentariosReg=this.value">${esc(comentariosReg)}</textarea></div>
     ${pct===0?`<label style="margin-top:8px">Precio de empleado</label>
@@ -1122,28 +1132,32 @@ function renderInventario(){
   const catActiva = cats.includes(catInv) ? catInv : cats[0];
   const lista = q ? products.filter(p=>(p.nombre||'').toLowerCase().includes(q)||(p.categoria||'').toLowerCase().includes(q))
                   : products.filter(p=>(p.categoria||'Otros')===catActiva);
-  const agregar = esAdmin ? `<div class="card"><h3 style="margin-top:0">Agregar producto</h3>
+  const agregar = `<div class="card"><h3 style="margin-top:0">Agregar producto</h3>
     <div class="row"><div><label>Nombre</label><input id="np-nombre"></div><div><label>Categoría</label><input id="np-cat" placeholder="Café"></div></div>
     <div class="row" style="margin-top:8px"><div><label>Precio</label><input id="np-precio" type="number"></div><div><label>Stock</label><input id="np-stock" type="number"></div></div>
-    <button class="primary" style="margin-top:10px" onclick="agregarProducto()">+ Agregar</button></div>` : '';
-  const aviso = esAdmin ? '' : '<p class="small" style="margin:0 0 8px">Como usuario puedes actualizar el <strong>stock</strong>. El precio y los productos nuevos los maneja el administrador.</p>';
+    <button class="primary" style="margin-top:10px" onclick="agregarProducto()">+ Agregar</button></div>`;
+  const aviso = '';
   const buscador = `<div class="card">${aviso}
     <input id="invBuscar" type="search" placeholder="🔍 Buscar artículo para editar…" value="${esc(busquedaInv)}" oninput="busquedaInv=this.value;render()" autocomplete="off">
     <div class="chips" id="chipsInv" style="margin-top:8px">${cats.map(c=>`<button class="${!q&&c===catActiva?'active':''}" onclick="catInv=this.dataset.c;busquedaInv='';render()" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
     <div class="small" style="margin-top:6px">${lista.length} artículo${lista.length===1?'':'s'}${q?' encontrados':' en '+esc(catActiva||'')}</div></div>`;
   const tarjetas = lista.length ? lista.map(p=>`<div class="card"><div class="orderline"><strong>${esc(p.nombre)}</strong><span class="small">${esc(p.categoria||'')}</span></div>
-    <div class="row" style="margin-top:8px"><div><label>Precio</label><input id="p-precio-${p.id}" type="number" value="${p.precio}" ${esAdmin?'':'disabled'}></div>
+    <div class="row" style="margin-top:8px"><div><label>Precio</label><input id="p-precio-${p.id}" type="number" step="any" min="0" value="${p.precio}"></div>
     <div><label>Stock</label><input id="p-stock-${p.id}" type="number" value="${p.stock}"></div></div>
-    <div style="display:flex;gap:8px;margin-top:8px"><button class="secondary" style="flex:1" onclick="guardarProducto('${p.id}')">Guardar</button><button class="secondary" style="flex:1" onclick="toggleMerma('${p.id}')">🗑️ Merma</button></div>
+    <div style="display:flex;gap:8px;margin-top:8px"><button class="secondary" style="flex:1" onclick="guardarProducto('${p.id}')">Guardar</button><button class="secondary" style="flex:1" onclick="toggleIngreso('${p.id}')">➕ Ingreso</button><button class="secondary" style="flex:1" onclick="toggleMerma('${p.id}')">🗑️ Merma</button></div>
+    ${ingresoAbierto===p.id?`<div class="card small" style="background:var(--bg2);margin-top:8px"><strong>Ingreso de ${esc(p.nombre)}</strong> <span class="small">· ahora hay ${p.stock}</span>
+      <div class="row" style="margin-top:6px"><div><label>Piezas que entran</label><input id="i-cant-${p.id}" type="number" min="1" inputmode="numeric" placeholder="12"></div>
+      <div><label>Nota (opcional)</label><input id="i-nota-${p.id}" maxlength="100" placeholder="Ej: tanda de la mañana"></div></div>
+      <button class="primary" style="width:100%;margin-top:6px" onclick="registrarIngreso('${p.id}')">Registrar ingreso (suma al stock)</button></div>`:''}
     ${mermaAbierta===p.id?`<div class="card small" style="background:var(--bg2);margin-top:8px"><strong>Registrar merma de ${esc(p.nombre)}</strong>
       <div class="row" style="margin-top:6px"><div><label>Piezas que se tiran</label><input id="m-cant-${p.id}" type="number" min="1" inputmode="numeric" placeholder="1"></div>
       <div><label>Motivo (obligatorio)</label><input id="m-mot-${p.id}" maxlength="100" placeholder="Ej: caducó"></div></div>
       <div class="chips" style="padding:6px 0">${['Caducó','Se cayó','Mal estado','Error de preparación','Muestra / degustación'].map(t=>`<button data-t="${esc(t)}" onclick="document.getElementById('m-mot-${p.id}').value=this.dataset.t">${esc(t)}</button>`).join('')}</div>
       <button class="primary" style="width:100%" onclick="registrarMerma('${p.id}')">Registrar merma (descuenta del stock)</button></div>`:''}</div>`).join('')
     : '<p class="empty">No se encontró ningún artículo.</p>';
-  const mermas=movs.filter(m=>m.tipo==='merma' && String(m.insumoId).startsWith('prod')).slice(0,15);
+  const mermas=movs.filter(m=>(m.tipo==='merma'||m.tipo==='entrada') && String(m.insumoId).startsWith('prod')).slice(0,15);
   const cuando=f=>{ const d=new Date(f); return isNaN(d)?'':d.toLocaleString('es-MX',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); };
-  const recientes=`<div class="card"><strong>Mermas recientes de productos</strong><div style="margin-top:6px">${mermas.length?mermas.map(m=>`<div class="orderline small"><span>${cuando(m.fecha)} · ${esc(String(m.insumo).replace(/ \(producto\)$/,''))} · ${esc(m.motivo||'')}${m.por?' <em>('+esc(m.por)+')</em>':''}</span><strong>−${Math.abs(m.cantidad)}</strong></div>`).join(''):'<p class="empty small" style="margin:4px 0">Sin mermas registradas.</p>'}</div></div>`;
+  const recientes=`<div class="card"><strong>Ingresos y mermas recientes de productos</strong><div style="margin-top:6px">${mermas.length?mermas.map(m=>`<div class="orderline small"><span>${cuando(m.fecha)} · ${esc(String(m.insumo).replace(/ \(producto\)$/,''))} · ${esc(m.motivo||'')}${m.por?' <em>('+esc(m.por)+')</em>':''}</span><strong>−${Math.abs(m.cantidad)}</strong></div>`).join(''):'<p class="empty small" style="margin:4px 0">Sin mermas registradas.</p>'}</div></div>`;
   return agregar + buscador + tarjetas + recientes;
 }
 let repDesde=fechaLocal(new Date()), repHasta=fechaLocal(new Date()), repRapido='hoy';
@@ -1176,15 +1190,15 @@ function diasEntre(d1,d2){
   return out;
 }
 // ---- Ventas por grupo: Alimentos, Bebidas y Pan ----
-function grupoDe(i){ if(i.libre && ['Alimentos','Pan','Bebidas'].includes(i.grupo)) return i.grupo; const pr=products.find(x=>x.id===i.id); const c=String(pr?pr.categoria:'').trim().toLowerCase(); return c==='alimentos'?'Alimentos':c==='pan'?'Pan':'Bebidas'; }
+function grupoDe(i){ if(i.libre && ['Alimentos','Pan','Bebidas'].includes(i.grupo)) return i.grupo; const pr=products.find(x=>x.id===i.id); const c=String(pr?pr.categoria:'').trim().toLowerCase(); return (c==='alimentos'||c==='tamales'||(!pr&&/tamal/i.test(String(i.nombre))))?'Alimentos':c==='pan'?'Pan':'Bebidas'; }
 function tarjetaGrupos(peds){
   const g={Alimentos:{u:0,m:0},Bebidas:{u:0,m:0},Pan:{u:0,m:0}}; let sub=0, tot=0;
   peds.forEach(o=>{ tot+=o.total; o.items.forEach(i=>{ const k=grupoDe(i), m=i.precio*i.cantidad; g[k].u+=i.cantidad; g[k].m+=m; sub+=m; }); });
   const desc=Math.round((tot-sub)*100)/100, ic={Alimentos:'🍽️',Bebidas:'🥤',Pan:'🥐'};
-  return `<div class="card small"><strong>Ventas por grupo</strong>
-    ${Object.keys(g).map(k=>`<div class="orderline"><span>${ic[k]} ${k} <span style="opacity:.7">· ${g[k].u} uds</span></span><span>${fmt(g[k].m)}</span></div>`).join('')}
-    ${desc!==0?`<div class="orderline"><span>🏷️ Descuentos y cortesías</span><span>${desc<0?'−':''}${fmt(Math.abs(desc))}</span></div>`:''}
-    <div class="orderline" style="font-weight:bold;border-top:1px solid var(--bg2);padding-top:4px;margin-top:4px"><span>Total</span><span>${fmt(tot)}</span></div></div>`;
+  return `<div class="card small"><strong>Ventas por grupo</strong> <span class="small">· pesos mexicanos (MXN)</span>
+    ${Object.keys(g).map(k=>`<div class="orderline"><span>${ic[k]} ${k} <span style="opacity:.7">· ${g[k].u} uds</span></span><span>${fmt(g[k].m)} MXN</span></div>`).join('')}
+    ${desc!==0?`<div class="orderline"><span>🏷️ Descuentos y cortesías</span><span>${desc<0?'−':''}${fmt(Math.abs(desc))} MXN</span></div>`:''}
+    <div class="orderline" style="font-weight:bold;border-top:1px solid var(--bg2);padding-top:4px;margin-top:4px"><span>Total</span><span>${fmt(tot)} MXN</span></div></div>`;
 }
 function renderReporte(){
   if(repDesde>repHasta){ const t=repDesde; repDesde=repHasta; repHasta=t; }
@@ -1299,7 +1313,7 @@ function render(){
   const bajosN = insumos.filter(i=>i.minimo>0 && i.stock<=i.minimo).length;
   const body = tab==='pend'?renderPendientes():tab==='hoy'?renderHoy():tab==='reg'?renderRegistrar():
                tab==='res'?renderResumen():tab==='canc'?renderCancelaciones():tab==='hist'?renderHistorial():
-               tab==='inv'?renderInventario():tab==='ins'?renderInsumos():tab==='caja'?renderCajaYReporte():renderCajaYReporte();
+               tab==='inv'?renderInventario():(tab==='ins'&&role==='admin')?renderInsumos():tab==='caja'?renderCajaYReporte():renderCajaYReporte();
   const tabsAdmin = role==='admin' ? `
     <button class="${tab==='canc'?'active':''}" onclick="setTab('canc')">Cancelaciones${cancTab>0?' ('+cancTab+')':''}</button>
     <button class="${tab==='hist'?'active':''}" onclick="setTab('hist')">Historial</button>
@@ -1315,7 +1329,7 @@ function render(){
     <button class="${tab==='reg'?'active':''}" onclick="setTab('reg')">Registrar manual</button>
     <button class="${tab==='res'?'active':''}" onclick="setTab('res')">Resumen del día</button>
     <button class="${tab==='inv'?'active':''}" onclick="setTab('inv')">Inventario</button>
-    <button class="${tab==='ins'?'active':''}" onclick="setTab('ins')">Insumos${bajosN>0?' ⚠️'+bajosN:''}</button>
+    ${role==='admin'?`<button class="${tab==='ins'?'active':''}" onclick="setTab('ins')">Insumos${bajosN>0?' ⚠️'+bajosN:''}</button>`:''}
     <button class="${tab==='caja'?'active':''}" onclick="setTab('caja')">${role==='admin'?'Caja y reporte':'Caja'}</button>
     ${tabsAdmin}
   </div></header><main>${body}</main>`;
